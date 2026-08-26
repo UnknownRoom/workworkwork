@@ -1,0 +1,5 @@
+vncdotool==1.3.0
+paddleocr
+numpy
+easyocr
+opencv-contrib-python
