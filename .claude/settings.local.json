@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m py_compile vnc_vision.py)",
+      "Bash(python3 -c ' *)",
+      "Bash(brew upgrade *)"
+    ]
+  }
+}
