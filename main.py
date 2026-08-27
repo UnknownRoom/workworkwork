@@ -9,7 +9,7 @@ VNC_HOST = "127.0.0.1"   # 这里输入 VNC Server 的 IP
 VNC_PORT = 5900              # 默认 VNC 端口
 VNC_PASSWORD = "123456"     #这里输入 VNC Server 的密码
 
-EXPECTED_SIZE = (1026, 771)
+EXPECTED_SIZE = (1920, 1080) # 预期的屏幕分辨率
 
 SCREENSHOT_PATH = "screen_test.png"
 

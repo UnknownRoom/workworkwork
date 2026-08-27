@@ -54,11 +54,18 @@ class ScreenCapturer:
     全程不落盘，降低 I/O 与延迟。
     """
 
-    def __init__(self, host: str, port: int = 5900, password: Optional[str] = None):
+    def __init__(
+        self,
+        host: str,
+        port: int = 5900,
+        password: Optional[str] = None,
+        timeout: float = 30.0,
+    ):
         """
         :param host:     VNC 服务器地址
         :param port:     VNC 端口，默认 5900
         :param password: 认证密码（无密码则传 None）
+        :param timeout:  连接/响应超时（秒），避免异步连接失败时无限阻塞
         """
         try:
             from vncdotool import api
@@ -70,70 +77,60 @@ class ScreenCapturer:
         self._api = api
         self.host = host
         self.port = port
-        # vncdotool 使用 'host::port' 形式连接
-        self._client = self._api.connect(f"{host}::{port}", password=password)
 
-        # 远端屏幕分辨率（用于坐标映射）
-        self.width: int = int(self._client.screen.width)
-        self.height: int = int(self._client.screen.height)
+        # vncdotool 1.x 的 api.connect 返回 ThreadedVNCClientProxy：
+        # 底层是异步 Twisted 连接，握手完成前 self.protocol 仍为 None，
+        # 此时直接访问 .screen 会抛 'NoneType' has no attribute 'screen'。
+        # 因此连接后必须先做一次全量刷新 —— refreshScreen 内部会阻塞到
+        # 连接建立并收到完整画面帧，之后 .screen 才是有效的 PIL.Image。
+        self._client = self._api.connect(
+            f"{host}::{port}", password=password, timeout=timeout
+        )
+        self._client.refreshScreen(incremental=False)
+
+        screen = self._client.screen
+        if screen is None:
+            raise RuntimeError("VNC 连接已建立，但未收到画面帧")
+
+        # 远端屏幕分辨率（用于坐标映射）。screen 是 PIL.Image，size=(宽, 高)
+        self.width, self.height = screen.size
         self.screen_size: Tuple[int, int] = (self.width, self.height)
 
     # ------------------------------------------------------------------
-    # 帧数据解码：VNC framebuffer 原始字节 -> BGR NumPy 数组（内存中）
+    # 帧抓取：PIL(RGB) -> BGR NumPy 数组（全程内存，不落盘）
     # ------------------------------------------------------------------
-    def _decode_framebuffer(self, raw: bytes, w: int, h: int) -> np.ndarray:
-        """
-        将 VNC framebuffer 的原始像素字节解码为 BGR 图像。
-
-        假设 32bpp true-colour（绝大多数游戏 VNC 服务器均为该格式）。
-        依据 pixelformat 中的红/绿/蓝移位与字节序还原 RGB。
-        """
-        pf = getattr(self._client, "pixelformat", {}) or {}
-        bpp = int(pf.get("bits-per-pixel", pf.get("bits_per_pixel", 32))) // 8
-        if bpp <= 0:
-            bpp = 4
-
-        # 移位信息（默认标准 RGB 布局）
-        big_endian = bool(pf.get("big-endian", pf.get("big_endian", True)))
-        r_shift = int(pf.get("red-shift", pf.get("red_shift", 16)))
-        g_shift = int(pf.get("green-shift", pf.get("green_shift", 8)))
-        b_shift = int(pf.get("blue-shift", pf.get("blue_shift", 0)))
-
-        arr = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, bpp)
-
-        # 以对应字节序把每像素打包成 uint32，再做移位取色
-        if big_endian:
-            px = arr.view(">u4").reshape(h, w)
-        else:
-            px = arr.view("<u4").reshape(h, w)
-
-        r = ((px >> r_shift) & 0xFF).astype(np.uint8)
-        g = ((px >> g_shift) & 0xFF).astype(np.uint8)
-        b = ((px >> b_shift) & 0xFF).astype(np.uint8)
-
-        # OpenCV 惯用 BGR 通道顺序
-        return cv2.merge([b, g, r])
-
     def grab(self) -> np.ndarray:
         """
         抓取一帧，直接返回内存中的 BGR NumPy 数组（不写盘）。
+
+        vncdotool 1.x 已把 framebuffer 解码为 PIL.Image(screen, RGB 模式)，
+        这里只需转成 OpenCV 惯用的 BGR 数组，无需再手工解析原始字节。
         """
-        # 请求一次全量 framebuffer 更新，确保拿到完整画面
-        try:
-            self._client.framebufferUpdateRequest(incremental=0)
-        except Exception:
-            pass  # 某些服务器可能已持续推送增量，忽略即可
+        # 全量刷新：阻塞至本次 framebuffer 更新提交完成
+        self._client.refreshScreen(incremental=False)
 
-        raw = bytes(self._client.framebuffer)
-        frame = self._decode_framebuffer(raw, self.width, self.height)
-        return frame
+        screen = self._client.screen
+        if screen is None:
+            raise RuntimeError("未获取到画面帧")
 
-    def close(self) -> None:
-        """断开 VNC 连接。"""
+        rgb = np.array(screen)  # (H, W, 3) uint8，RGB 顺序
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    def close(self, shutdown_reactor: bool = True) -> None:
+        """
+        断开 VNC 连接，并（默认）关闭后台 Twisted reactor 线程。
+
+        :param shutdown_reactor: 单连接场景建议 True；多连接共享 reactor 时设 False。
+        """
         try:
             self._client.disconnect()
         except Exception:
             pass
+        if shutdown_reactor:
+            try:
+                self._api.shutdown()
+            except Exception:
+                pass
 
 
 # 别名，便于习惯不同命名的调用方
@@ -494,13 +491,14 @@ class InputController:
         """
         左键（默认 button=1）点击。
         VNC 按键号：1=左键 2=中键 3=右键。
+        使用 mouseDown/mouseUp 组合，中间插入延迟模拟真实按压时长。
         """
         x, y = self.map_coords(x, y)
         self._client.mouseMove(x, y)
         self._jitter()
-        self._client.mousePress(button)
+        self._client.mouseDown(button)
         self._jitter()
-        self._client.mouseRelease(button)
+        self._client.mouseUp(button)
         self._jitter()
 
     def double_click(self, x: int, y: int, button: int = 1) -> None:
@@ -516,7 +514,7 @@ class InputController:
         x2, y2 = self.map_coords(x2, y2)
         self._client.mouseMove(x1, y1)
         self._jitter()
-        self._client.mousePress(button)
+        self._client.mouseDown(button)
         self._jitter()
         # 分步移动，模拟真人拖动轨迹
         steps = 8
@@ -525,7 +523,7 @@ class InputController:
             my = int(round(y1 + (y2 - y1) * i / steps))
             self._client.mouseMove(mx, my)
             self._jitter()
-        self._client.mouseRelease(button)
+        self._client.mouseUp(button)
         self._jitter()
 
     # ------------------------------------------------------------------
