@@ -566,7 +566,7 @@ def main() -> None:
           -> 算出全屏坐标 -> 输出识别结果及坐标。
     """
     # ---- 连接 VNC（按需修改为真实地址/密码）----
-    HOST, PORT, PASSWORD = "127.0.0.1", 5900, None
+    HOST, PORT, PASSWORD = "127.0.0.1", 5900, "123456"
     capturer = ScreenCapturer(HOST, PORT, PASSWORD)
 
     # ---- 初始化引擎 ----
