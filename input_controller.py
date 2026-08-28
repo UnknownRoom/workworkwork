@@ -19,7 +19,12 @@ class InputController:
     每次事件之间加入 50~150ms 的随机网络延迟缓冲，避免指令堆积触发风控或丢包。
     """
 
-    def __init__(self,client):
+    def __init__(
+        self,
+        client,
+        scale: Tuple[float, float] = (1.0, 1.0),
+        delay_range: Tuple[float, float] = (0.05, 0.15),
+        ):
         self._client = client
 
     # ------------------------------------------------------------------
