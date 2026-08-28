@@ -62,7 +62,6 @@ def connect_vnc():
 
 def check_screen(client):
     """检查远程屏幕尺寸"""
-    client.refreshScreen(incremental=False)
     try:
         width = client.screen.width
         height = client.screen.height
@@ -145,7 +144,7 @@ def main():
 
     try:
         print("\n[1/3] 检查屏幕")
-
+        client.refreshScreen(incremental=False)
         screen_ok = check_screen(client)
 
         if not screen_ok:
