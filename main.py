@@ -185,11 +185,11 @@ def main():
                 f"@ {position}"
             )
             if text == "点击进入游戏" and confidence > 0.8:
-                    capturer = vnc_vision.ScreenCapturer(client)
-                    controller = InputController(capturer)
+                    capturer = InputController(client)
                         
                     x, y = position
                     controller.click(x, y)
+
                     print(f"✅ 找到目标，点击 ({x}, {y})")
                     break
             

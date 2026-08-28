@@ -66,18 +66,7 @@ class ScreenCapturer:
             raise RuntimeError(
                 "缺少 vncdotool，请先执行: pip install vncdotool"
             ) from exc
-
-
-        # vncdotool 1.x 的 api.connect 返回 ThreadedVNCClientProxy：
-        # 底层是异步 Twisted 连接，握手完成前 self.protocol 仍为 None，
-        # 此时直接访问 .screen 会抛 'NoneType' has no attribute 'screen'。
-        # 因此连接后必须先做一次全量刷新 —— refreshScreen 内部会阻塞到
-        # 连接建立并收到完整画面帧，之后 .screen 才是有效的 PIL.Image。
-        self._client = self._api.connect(
-            f"{host}::{port}", 
-            password=password, 
-            timeout=timeout
-        )
+       
         self._client.refreshScreen(incremental=False)
 
         screen = self._client.screen
@@ -108,23 +97,8 @@ class ScreenCapturer:
         rgb = np.array(screen)  # (H, W, 3) uint8，RGB 顺序
         return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-    def close(self, shutdown_reactor: bool = True) -> None:
-        """
-        断开 VNC 连接，并（默认）关闭后台 Twisted reactor 线程。
-
-        :param shutdown_reactor: 单连接场景建议 True；多连接共享 reactor 时设 False。
-        """
-        try:
-            self._client.disconnect()
-        except Exception:
-            pass
-        if shutdown_reactor:
-            try:
-                self._api.shutdown()
-            except Exception:
-                pass
-
-
+    def close(self):
+       pass  # VNCClient 不需要显式关闭，vncdotool 内部会自动管理 socket
 # 别名，便于习惯不同命名的调用方
 VNCClient = ScreenCapturer
 

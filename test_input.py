@@ -1,6 +1,6 @@
 # test_input.py
 
-from vnc_vision import ScreenCapturer
+from vncdotool import api
 from input_controller import InputController
 
 client = api.connect(
