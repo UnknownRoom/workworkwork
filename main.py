@@ -165,7 +165,7 @@ def main():
 
         vision = vnc_vision.VisionEngine(
             ocr_backend="paddleocr",
-            languages=["ch", "en"],
+            languages=["ch"],
             gpu=False
         )
 
