@@ -156,7 +156,7 @@ class VisionEngine:
     def __init__(
         self,
         ocr_backend: str = "paddleocr",
-        languages: Sequence[str] = ("ch", "en"),
+        languages: Sequence[str] = ("ch"),
         gpu: bool = False,
         **ocr_kwargs: Any,
     ):
@@ -191,7 +191,7 @@ class VisionEngine:
             # 3.x 默认参数：关闭与文字识别无关的版面/方向分类，加速
             lang = self.languages if self.languages else ["ch"]
             self._ocr = PaddleOCR(
-                lang="ch".join(lang),
+                lang="".join(lang),
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
