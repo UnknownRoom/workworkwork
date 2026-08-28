@@ -193,9 +193,10 @@ def main():
                     x, y = position
                     controller.click(x, y)
                     print(f"✅ 找到目标，点击 ({x}, {y})")
+                    break
             
-            print("\n✅ VNC → Vision 测试完成")
-            return 0
+        print("\n✅ VNC → Vision 测试完成")
+        return 0
 
     except Exception as e:
 
