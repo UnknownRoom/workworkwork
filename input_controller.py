@@ -44,7 +44,7 @@ class InputController:
         lo, hi = self.delay_range
         time.sleep(random.uniform(lo, hi))
 
-    def map_coords(self, x: int, y: int) -> Point:
+    def map_coords(self, x: int, y: int) -> Tuple[int, int]:
         """把「抓取帧坐标系」映射到「VNC 远端坐标系」。"""
         sx, sy = self.scale
         return (int(round(x * sx)), int(round(y * sy)))

@@ -4,7 +4,7 @@ import os
 import sys
 import vnc_vision
 import cv2
-
+from input_controller import InputController
 
 VNC_HOST = "127.0.0.1"   # 这里输入 VNC Server 的 IP
 VNC_PORT = 5900              # 默认 VNC 端口
@@ -182,10 +182,21 @@ def main():
                 f"(置信度 {confidence:.2f}) "
                 f"@ {position}"
             )
-
-        print("\n✅ VNC → Vision 测试完成")
-
-        return 0
+            if text == "点击进入游戏" and confidence > 0.8:
+                    controller = InputController(
+                        vnc_vision.ScreenCapturer(
+                            VNC_HOST, 
+                            VNC_PORT, 
+                            VNC_PASSWORD
+                            )
+                        )
+                    x, y = position
+                    controller.click(x, y)
+                    print(f"✅ 找到目标，点击 ({x}, {y})")
+                    break
+            
+            print("\n✅ VNC → Vision 测试完成")
+            return 0
 
     except Exception as e:
 
