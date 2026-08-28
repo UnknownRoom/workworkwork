@@ -7,7 +7,7 @@ from typing import Any, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-# from vnc_vision import ScreenCapturer
+from vnc_vision import ScreenCapturer
 
 
 # ===========================================================================
