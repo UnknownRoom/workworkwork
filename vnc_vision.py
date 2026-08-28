@@ -26,7 +26,7 @@ vnc_vision.py
 """
 
 from __future__ import annotations
-from input_controller import InputController
+# from input_controller import InputController
 from vncdotool import api
 
 import os
@@ -460,7 +460,7 @@ def main() -> None:
 
     # ---- 初始化引擎 ----
     vision = VisionEngine(ocr_backend="paddleocr", languages=["ch", "en"])
-    controller = InputController(capturer)
+    # controller = InputController(capturer)
 
     try:
         # 1. 内存流抓取一帧（不写盘）
@@ -494,7 +494,7 @@ def main() -> None:
         hit_tpl, pos = vision.find_template(frame, "assets/btn_ok.png", threshold=0.8)
         if hit_tpl:
             print(f"[template] 找到按钮 @ {pos}")
-            controller.click(*pos)
+            # controller.click(*pos)
     finally:
         capturer.close()
 
