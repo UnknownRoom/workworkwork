@@ -137,6 +137,8 @@ def capture_screen(client):
 def main():
 
     client = connect_vnc()
+    capturer = vnc_vision.ScreenCapturer(client)
+    controller = InputController(client)
 
     if client is None:
         print("\n程序终止：VNC 尚未连接成功")
@@ -183,13 +185,9 @@ def main():
                 f"@ {position}"
             )
             if text == "点击进入游戏" and confidence > 0.8:
-                    controller = InputController(
-                        vnc_vision.ScreenCapturer(
-                            VNC_HOST, 
-                            VNC_PORT, 
-                            VNC_PASSWORD
-                            )
-                        )
+                    capturer = vnc_vision.ScreenCapturer(client)
+                    controller = InputController(capturer)
+                        
                     x, y = position
                     controller.click(x, y)
                     print(f"✅ 找到目标，点击 ({x}, {y})")

@@ -7,7 +7,6 @@ from typing import Any, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from vnc_vision import ScreenCapturer
 
 
 # ===========================================================================
@@ -20,21 +19,8 @@ class InputController:
     每次事件之间加入 50~150ms 的随机网络延迟缓冲，避免指令堆积触发风控或丢包。
     """
 
-    def __init__(
-        self,
-        capturer: ScreenCapturer,
-        delay_range: Tuple[float, float] = (0.05, 0.15),
-        scale: Tuple[float, float] = (1.0, 1.0),
-    ):
-        """
-        :param capturer:    ScreenCapturer 实例（复用同一 VNC 连接）
-        :param delay_range: 随机延迟区间 (min_sec, max_sec)，默认 50~150ms
-        :param scale:       坐标缩放 (sx, sy)。当抓取的帧被缩放过（非 1:1）时使用。
-        """
-        self._capturer = capturer
-        self._client = capturer._client
-        self.delay_range = delay_range
-        self.scale = scale
+    def __init__(self,client):
+        self._client = client
 
     # ------------------------------------------------------------------
     # 工具

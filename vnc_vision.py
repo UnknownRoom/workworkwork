@@ -58,19 +58,8 @@ class ScreenCapturer:
     全程不落盘，降低 I/O 与延迟。
     """
 
-    def __init__(
-        self,
-        host: str,
-        port: int = 5900,
-        password: Optional[str] = None,
-        timeout: float = 30.0,
-    ):
-        """
-        :param host:     VNC 服务器地址
-        :param port:     VNC 端口，默认 5900
-        :param password: 认证密码（无密码则传 None）
-        :param timeout:  连接/响应超时（秒），避免异步连接失败时无限阻塞
-        """
+    def __init__(self,client):
+        self. _client = client
         try:
             from vncdotool import api
         except ImportError as exc:  # pragma: no cover
@@ -78,9 +67,6 @@ class ScreenCapturer:
                 "缺少 vncdotool，请先执行: pip install vncdotool"
             ) from exc
 
-        self._api = api
-        self.host = host
-        self.port = port
 
         # vncdotool 1.x 的 api.connect 返回 ThreadedVNCClientProxy：
         # 底层是异步 Twisted 连接，握手完成前 self.protocol 仍为 None，
@@ -331,7 +317,7 @@ class VisionEngine:
             return out
 
         # 2.x：ocr(img) -> [[ [ [x,y]x4 ], (text, score) ], ...]
-        raw = self._ocr.ocr(image, cls=False)
+        raw = self._ocr.predict(image, cls=False)
         if not raw:
             return []
         lines = raw[0] if isinstance(raw[0], list) and raw[0] and isinstance(raw[0][0], list) else raw
