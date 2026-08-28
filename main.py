@@ -3,6 +3,7 @@ import time
 import os
 import sys
 import vnc_vision
+import cv2
 
 
 VNC_HOST = "127.0.0.1"   # 这里输入 VNC Server 的 IP
