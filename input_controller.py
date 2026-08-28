@@ -26,6 +26,8 @@ class InputController:
         delay_range: Tuple[float, float] = (0.05, 0.15),
         ):
         self._client = client
+        self.scale = scale
+        self.delay_range = delay_range
 
     # ------------------------------------------------------------------
     # 工具
