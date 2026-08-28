@@ -60,39 +60,22 @@ def connect_vnc():
 # =========================
 
 def check_screen(client):
-
     """检查远程屏幕尺寸"""
-
     try:
-
         width = client.screen.width
-
         height = client.screen.height
-
         print(f"远程屏幕尺寸: {width} × {height}")
 
         if (width, height) == EXPECTED_SIZE:
-
             print("✅ 屏幕分辨率符合预期")
-
             return True
 
-        print(
-
-            f"⚠️ 屏幕分辨率与预期不一致 "
-
-            f"(预期 {EXPECTED_SIZE[0]} × {EXPECTED_SIZE[1]})"
-
-        )
-
+        print(f"⚠️ 屏幕分辨率与预期不一致 "f"(预期 {EXPECTED_SIZE[0]} × {EXPECTED_SIZE[1]})")
         return False
 
     except Exception as e:
-
         print("❌ 无法获取远程屏幕信息")
-
         print(f"错误: {e}")
-
         return False
 
 # =========================
@@ -109,23 +92,31 @@ def capture_screen(client):
 
     try:
 
+        # 使用已经验证成功的方式
+
         client.captureScreen(SCREENSHOT_PATH)
 
-        if os.path.exists(SCREENSHOT_PATH):
+        if not os.path.exists(SCREENSHOT_PATH):
 
-            file_size = os.path.getsize(SCREENSHOT_PATH)
+            print("❌ 截图命令执行完成，但没有找到文件")
 
-            print("✅ 截图成功")
+            return None
 
-            print(f"文件: {SCREENSHOT_PATH}")
+        # 将截图文件读取为 OpenCV / NumPy 图像
 
-            print(f"大小: {file_size} bytes")
+        frame = cv2.imread(SCREENSHOT_PATH)
 
-            return True
+        if frame is None:
 
-        print("❌ 截图命令执行完成，但没有找到文件")
+            print("❌ 截图文件存在，但 OpenCV 无法读取")
 
-        return False
+            return None
+
+        print("✅ 截图成功")
+
+        print(f"画面尺寸: {frame.shape[1]} × {frame.shape[0]}")
+
+        return frame
 
     except Exception as e:
 
@@ -134,8 +125,7 @@ def capture_screen(client):
         print(f"错误类型: {type(e).__name__}")
 
         print(f"错误信息: {e}")
-
-        return False
+        return None
 
 # =========================
 
@@ -145,61 +135,64 @@ def capture_screen(client):
 
 def main():
 
-    print("\n")
-
-    print("=" * 50)
-
-    print("VNC 自动化环境测试")
-
-    print("=" * 50)
-
     client = connect_vnc()
 
     if client is None:
-
         print("\n程序终止：VNC 尚未连接成功")
-
         return 1
 
     try:
-
-        print("\n[1/2] 检查屏幕")
+        print("\n[1/3] 检查屏幕")
 
         screen_ok = check_screen(client)
 
         if not screen_ok:
-
             print("\n⚠️ 当前环境暂不符合预期")
-
             print("仍然继续进行截图测试...")
 
-        print("\n[2/2] 获取截图")
+        print("\n[2/3] 获取截图")
 
-        screenshot_ok = capture_screen(client)
+        frame = capture_screen(client)
 
-        if not screenshot_ok:
-
+        if frame is None:
             print("\n❌ 核心测试失败")
-
             return 1
 
-        print("\n" + "=" * 50)
+        print("✅ VNC → NumPy 图像转换成功")
 
-        print("✅ VNC 核心链路测试完成")
+        print("\n[3/3] 初始化 Vision")
 
-        print("=" * 50)
+        vision = vnc_vision.VisionEngine(
+            ocr_backend="paddleocr",
+            languages=["ch", "en"],
+            gpu=False
+        )
 
-        print("\n下一步：")
+        print("✅ VisionEngine 初始化成功")
 
-        print("1. 打开 screen_test.png")
+        # 先直接识别整张屏幕
+        results = vision.read_all(frame)
 
-        print("2. 确认是否为虚拟机实际画面")
+        print(f"\n检测到 {len(results)} 个文本：")
 
-        print("3. 确认画面是否为 1026 × 771")
+        for text, confidence, position in results:
+            print(
+                f"  '{text}' "
+                f"(置信度 {confidence:.2f}) "
+                f"@ {position}"
+            )
 
-        print("4. 确认后再接入 OCR")
+        print("\n✅ VNC → Vision 测试完成")
 
         return 0
+
+    except Exception as e:
+
+        print("\n❌ Vision 测试失败")
+        print(f"错误类型: {type(e).__name__}")
+        print(f"错误信息: {e}")
+
+        return 1
 
     finally:
 
