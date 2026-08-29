@@ -37,6 +37,7 @@ from typing import Any, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
+from VisionResults import VisionResult,OCRResult, OCR_result
 
 # ---------------------------------------------------------------------------
 # 类型别名：坐标 / 边界框 / 识别结果
@@ -129,6 +130,7 @@ class VisionEngine:
         self.languages = list(languages)
         self._ocr = None
         self._init_ocr(gpu=gpu, **ocr_kwargs)
+        VisionResult = self.observe
 
     # ------------------------------------------------------------------
     # OCR 引擎初始化
@@ -405,60 +407,74 @@ class VisionEngine:
         cx = max_loc[0] + tw // 2 + offset[0]
         cy = max_loc[1] + th // 2 + offset[1]
         return (True, (int(cx), int(cy)))
-
+    
+    def observe(self, frame: np.ndarray) -> VisionResult:
+        ocr_results = self.read_all(frame)
+        result = VisionResult(
+        ocr_results=[
+            OCRResult(
+                text=text,
+                confidence=confidence,
+                position=position,
+            )
+            for text, confidence, position in ocr_results
+        ]
+    )
+        return result
+    
 
 # ===========================================================================
 # 4. 完整闭环测试示例
 # ===========================================================================
-def main() -> None:
-    """
-    演示：截取 VNC 画面 -> 指定 ROI 裁剪 -> OCR 识别 NPC 名字/ID
-          -> 算出全屏坐标 -> 输出识别结果及坐标。
-    """
-    # ---- 连接 VNC（按需修改为真实地址/密码）----
-    HOST, PORT, PASSWORD = "127.0.0.1", 5900, "123456"
-    capturer = ScreenCapturer(HOST, PORT, PASSWORD)
+# def main() -> None:
+#     """
+#     演示：截取 VNC 画面 -> 指定 ROI 裁剪 -> OCR 识别 NPC 名字/ID
+#           -> 算出全屏坐标 -> 输出识别结果及坐标。
+#     """
+#     # ---- 连接 VNC（按需修改为真实地址/密码）----
+#     HOST, PORT, PASSWORD = "127.0.0.1", 5900, "123456"
+#     capturer = ScreenCapturer(HOST, PORT, PASSWORD)
 
-    # ---- 初始化引擎 ----
-    vision = VisionEngine(ocr_backend="paddleocr", languages=["ch", "en"])
-    # controller = InputController(capturer)
+#     # ---- 初始化引擎 ----
+#     vision = VisionEngine(ocr_backend="paddleocr", languages=["ch", "en"])
+#     # controller = InputController(capturer)
 
-    try:
-        # 1. 内存流抓取一帧（不写盘）
-        frame = capturer.grab()
-        print(f"[capture] 画面尺寸: {frame.shape[1]}x{frame.shape[0]}")
+#     try:
+#         # 1. 内存流抓取一帧（不写盘）
+#         frame = capturer.grab()
+#         print(f"[capture] 画面尺寸: {frame.shape[1]}x{frame.shape[0]}")
 
-        # 2. 指定 ROI：假设 NPC 名字栏位于屏幕 (100, 200)，宽 300 高 40
-        npc_roi_bbox: BBox = (100, 200, 300, 40)
-        roi = vision.crop_roi(frame, npc_roi_bbox)
+#         # 2. 指定 ROI：假设 NPC 名字栏位于屏幕 (100, 200)，宽 300 高 40
+#         npc_roi_bbox: BBox = (100, 200, 300, 40)
+#         roi = vision.crop_roi(frame, npc_roi_bbox)
 
-        # 3. 预处理：灰度 + 二值化，提升 OCR 准确率
-        pre = vision.binarize(vision.to_gray(roi), method="otsu")
+#         # 3. 预处理：灰度 + 二值化，提升 OCR 准确率
+#         pre = vision.binarize(vision.to_gray(roi), method="otsu")
 
-        # 4. OCR 识别目标文本（offset 传入 ROI 左上角，用于换算全屏坐标）
-        target = "铁匠铺老板"
-        hit, text, conf, center = vision.detect_text(
-            pre, target, confidence=0.6, offset=npc_roi_bbox[:2], fuzzy=True
-        )
+#         # 4. OCR 识别目标文本（offset 传入 ROI 左上角，用于换算全屏坐标）
+#         target = "铁匠铺老板"
+#         hit, text, conf, center = vision.detect_text(
+#             pre, target, confidence=0.6, offset=npc_roi_bbox[:2], fuzzy=True
+#         )
 
-        if hit:
-            print(f"[OCR] 命中: '{text}' (置信度 {conf:.2f}) @ 全屏坐标 {center}")
-            # 5. 输出识别结果及坐标，并可据此点击
-            # controller.click(*center)
-        else:
-            print(f"[OCR] 未命中目标 '{target}'")
-            # 兜底：打印该 ROI 内识别到的所有文本，便于调试
-            for t, c, p in vision.read_all(pre, offset=npc_roi_bbox[:2]):
-                print(f"  - '{t}' ({c:.2f}) @ {p}")
+#         if hit:
+#             print(f"[OCR] 命中: '{text}' (置信度 {conf:.2f}) @ 全屏坐标 {center}")
+#             # 5. 输出识别结果及坐标，并可据此点击
+#             # controller.click(*center)
+#         else:
+#             print(f"[OCR] 未命中目标 '{target}'")
+#             # 兜底：打印该 ROI 内识别到的所有文本，便于调试
+#             for t, c, p in vision.read_all(pre, offset=npc_roi_bbox[:2]):
+#                 print(f"  - '{t}' ({c:.2f}) @ {p}")
 
-        # 6. 模板匹配示例：定位“确定”按钮
-        hit_tpl, pos = vision.find_template(frame, "assets/btn_ok.png", threshold=0.8)
-        if hit_tpl:
-            print(f"[template] 找到按钮 @ {pos}")
-            # controller.click(*pos)
-    finally:
-        capturer.close()
+#         # 6. 模板匹配示例：定位“确定”按钮
+#         hit_tpl, pos = vision.find_template(frame, "assets/btn_ok.png", threshold=0.8)
+#         if hit_tpl:
+#             print(f"[template] 找到按钮 @ {pos}")
+#             # controller.click(*pos)
+#     finally:
+#         capturer.close()
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

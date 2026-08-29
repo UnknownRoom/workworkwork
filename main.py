@@ -129,6 +129,75 @@ def capture_screen(client):
         return None
 
 # =========================
+# 打印 VisionResult
+# =========================
+
+def print_vision_result(result: VisionResult):
+
+    """输出 VisionResult，方便实机调试"""
+
+    print("\n" + "=" * 50)
+
+    print("VisionResult")
+
+    print("=" * 50)
+
+    print(f"OCR 结果数量: {len(result.ocr_results)}")
+
+    if not result.ocr_results:
+
+        print("  （没有识别到文本）")
+
+    for item in result.ocr_results:
+
+        print(
+
+            f"  '{item.text}' "
+
+            f"(置信度 {item.confidence:.2f}) "
+
+            f"@ {item.position}"
+
+        )
+# =========================
+
+# 状态测试
+
+# =========================
+
+def test_game_state(vision, frame):
+
+    """
+    测试：
+    VisionEngine → VisionResult → GameState
+    """
+
+    print("\n[Vision] 正在分析当前画面...")
+
+    result = vision.observe(frame)
+
+    print_vision_result(result)
+
+    state = detect_game_state(result)
+
+    print("\n" + "=" * 50)
+
+    print("GameState")
+
+    print("=" * 50)
+
+    if state is None:
+
+        print("⚠️ 无法判断当前游戏状态")
+
+    else:
+
+        print(f"当前状态: {state.name}")
+
+        print(f"状态值: {state.value}")
+
+    return state
+# =========================
 
 # 主程序
 
@@ -175,31 +244,29 @@ def main():
 
         print("✅ VisionEngine 初始化成功")
 
-        # 先直接识别整张屏幕
-        results = vision.read_all(frame)
+        # -------------------------
+        # 4. 测试状态识别
+        # -------------------------
+        print("\n[4/4] 测试 GameState")
 
-        print(f"\n检测到 {len(results)} 个文本：")
+        state = test_game_state(vision, frame)
 
-        for text, confidence, position in results:
-            print(
-                f"  '{text}' "
-                f"(置信度 {confidence:.2f}) "
-                f"@ {position}"
-            )
-            if text == "点击进入游戏" and confidence > 0.8:   
-                    x, y = position
-                    controller.click(x, y)
-
-                    print(f"✅ 找到目标，点击 ({x}, {y})")
-                    break
-            
-        print("\n✅ VNC → Vision 测试完成")
+        print("\n" + "=" * 50)
+        print("测试完成")
+        print("=" * 50)
+        
+        if state is not None:
+            print(f"✅ 当前识别状态: {state.name}")
+        else:
+            print("⚠️ 当前画面暂时无法匹配 State")
         return 0
 
     except Exception as e:
 
         print("\n❌ Vision 测试失败")
+
         print(f"错误类型: {type(e).__name__}")
+
         print(f"错误信息: {e}")
 
         return 1
