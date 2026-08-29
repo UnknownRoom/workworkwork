@@ -8,6 +8,7 @@ class OCRResult:
         text: str
         confidence: float
         position: Point
+@dataclass
 class VisionResult:
     
     # 原始 OCR 结果
