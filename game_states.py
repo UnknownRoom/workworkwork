@@ -15,6 +15,11 @@ class GameState(Enum):
     CREATE_ROLE = auto()
     MENU = auto()
 
+def has_text(result: VisionResult, text: str) -> bool:
+    return any(
+        item.text.strip() == text
+        for item in result.ocr_results
+    )
 def detect_game_state(result: VisionResult) -> GameState:
 
     if result.is_loading:
@@ -29,8 +34,19 @@ def detect_game_state(result: VisionResult) -> GameState:
 
         return GameState.CHANNEL_SELECT
 
-    if result.has_login_page:
-
+    texts = {
+        item.text.strip()
+        for item in result.ocr_results
+        if item.confidence >= 0.6
+    }
+    # 登录页面
+    if (
+        "用户名" in texts
+        and "请输入你的账号" in texts
+        and "密码" in texts
+        and "请输入你的密码" in texts
+        and "登录" in texts
+    ):
         return GameState.LOG_IN
 
     if result.has_register_page:
@@ -41,4 +57,4 @@ def detect_game_state(result: VisionResult) -> GameState:
 
         return GameState.MENU
 
-    return GameState.GAME_START
+    return None
