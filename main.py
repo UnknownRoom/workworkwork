@@ -275,6 +275,25 @@ def main():
 
     finally:
 
+        start = time.perf_counter()
+
+        frame = capture_screen(client)
+
+        t1 = time.perf_counter()
+
+        result = vision.observe(frame)
+
+        t2 = time.perf_counter()
+
+        state = detect_game_state(result)
+
+        t3 = time.perf_counter()
+
+        print(f"截图: {t1 - start:.3f}s")
+        print(f"OCR:  {t2 - t1:.3f}s")
+        print(f"状态: {t3 - t2:.3f}s")
+        print(f"总计: {t3 - start:.3f}s")
+
         client.disconnect()
 
         print("\nVNC 连接已关闭")
