@@ -37,7 +37,7 @@ from typing import Any, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
-from VisionResults import VisionResult,OCRResult, OCR_result
+from VisionResults import VisionResult,OCRResult
 
 # ---------------------------------------------------------------------------
 # 类型别名：坐标 / 边界框 / 识别结果
@@ -130,7 +130,6 @@ class VisionEngine:
         self.languages = list(languages)
         self._ocr = None
         self._init_ocr(gpu=gpu, **ocr_kwargs)
-        VisionResult = self.observe
 
     # ------------------------------------------------------------------
     # OCR 引擎初始化
@@ -409,8 +408,9 @@ class VisionEngine:
         return (True, (int(cx), int(cy)))
     
     def observe(self, frame: np.ndarray) -> VisionResult:
+        """分析当前画面，并生成 VisionResult。"""
         ocr_results = self.read_all(frame)
-        result = VisionResult(
+        return VisionResult(
         ocr_results=[
             OCRResult(
                 text=text,
@@ -420,7 +420,6 @@ class VisionEngine:
             for text, confidence, position in ocr_results
         ]
     )
-        return result
     
 
 # ===========================================================================

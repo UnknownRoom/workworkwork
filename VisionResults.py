@@ -1,18 +1,17 @@
 from dataclasses import dataclass, field
 from typing import List
 
-from vnc_vision import TextHit
-
+Point = tuple[int, int]
 
 @dataclass
 class OCRResult:
         text: str
         confidence: float
-        position: tuple[int, int]
+        position: Point
 class VisionResult:
     
     # 原始 OCR 结果
-    ocr_results: List[OCRResult]
+    ocr_results: List[OCRResult] = field(default_factory=list)
 
     # 游戏外状态特征
     has_register_page: bool = False
