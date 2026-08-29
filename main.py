@@ -5,6 +5,8 @@ import sys
 import vnc_vision
 import cv2
 from input_controller import InputController
+from game_states import detect_game_state, GameState
+from vnc_vision import VisionResult, OCRResult
 
 VNC_HOST = "127.0.0.1"   # 这里输入 VNC Server 的 IP
 VNC_PORT = 5900              # 默认 VNC 端口
@@ -254,7 +256,7 @@ def main():
         print("\n" + "=" * 50)
         print("测试完成")
         print("=" * 50)
-        
+
         if state is not None:
             print(f"✅ 当前识别状态: {state.name}")
         else:
