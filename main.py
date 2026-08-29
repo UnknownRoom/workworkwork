@@ -1,303 +1,159 @@
-from vncdotool import api
-import time
-import os
+# -*- coding: utf-8 -*-
+"""
+main.py
+============================================================
+任务号脚本入口：连接 VNC -> 初始化组件 -> 提示用户定制目标 -> 运行生命周期。
+
+CALIBRATE 校准清单（实机跑通前逐项确认，详见各模块内的 # CALIBRATE: 标注）：
+    - VNC_HOST / VNC_PORT / VNC_PASSWORD / EXPECTED_SIZE 按实际环境填写。
+    - OCR 后端（paddleocr/easyocr）与语言、是否 GPU。
+    - 游戏内状态关键词、坐标、ROI、模板图、按键名。
+"""
+from __future__ import annotations
+
+import logging
 import sys
+
 import vnc_vision
-import cv2
+from fsm import RuntimeConfig
+from game_states import Country
 from input_controller import InputController
-from game_states import detect_game_state, GameState
-from vnc_vision import VisionResult, OCRResult
+from lifecycle import OuterLifecycle
+from vncdotool import api
 
-VNC_HOST = "127.0.0.1"   # 这里输入 VNC Server 的 IP
-VNC_PORT = 5900              # 默认 VNC 端口
-VNC_PASSWORD = "123456"     #这里输入 VNC Server 的密码
+# ---- VNC 连接参数（CALIBRATE: 按实际环境填写）----
+VNC_HOST = "127.0.0.1"
+VNC_PORT = 5900
+VNC_PASSWORD = "123456"
 
-EXPECTED_SIZE = (1920, 1080) # 预期的屏幕分辨率
+EXPECTED_SIZE = (1920, 1080)   # 预期分辨率
 
-SCREENSHOT_PATH = "screen_test.png"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
-# =========================
-
-# VNC 连接
-
-# =========================
 
 def connect_vnc():
-
-    """连接 VNC Server"""
-
+    """连接 VNC Server。"""
     print("=" * 50)
-
     print("正在连接 VNC...")
-
     print(f"地址: {VNC_HOST}:{VNC_PORT}")
-
     try:
-
-        client = api.connect(
-
-            f"{VNC_HOST}::{VNC_PORT}",
-
-            password=VNC_PASSWORD
-
-        )
-
+        client = api.connect(f"{VNC_HOST}::{VNC_PORT}", password=VNC_PASSWORD)
         print("✅ VNC 连接成功")
-
         return client
-
     except Exception as e:
-
         print("❌ VNC 连接失败")
-
         print(f"错误类型: {type(e).__name__}")
-
         print(f"错误信息: {e}")
-
         return None
 
-# =========================
 
-# 屏幕信息
-
-# =========================
-
-def check_screen(client):
-    """检查远程屏幕尺寸"""
+def check_screen(client) -> bool:
+    """检查远程屏幕尺寸。"""
     try:
-        width = client.screen.width
-        height = client.screen.height
+        width, height = client.screen.width, client.screen.height
         print(f"远程屏幕尺寸: {width} × {height}")
-
         if (width, height) == EXPECTED_SIZE:
             print("✅ 屏幕分辨率符合预期")
             return True
-
-        print(f"⚠️ 屏幕分辨率与预期不一致 "f"(预期 {EXPECTED_SIZE[0]} × {EXPECTED_SIZE[1]})")
+        print(f"⚠️ 屏幕分辨率与预期不一致（预期 {EXPECTED_SIZE[0]} × {EXPECTED_SIZE[1]}）")
         return False
-
     except Exception as e:
         print("❌ 无法获取远程屏幕信息")
         print(f"错误: {e}")
         return False
 
-# =========================
 
-# 截图
+# ===========================================================================
+# 运行时定制目标提示（纯文本回答）
+# ===========================================================================
+def prompt_country() -> Country:
+    """提示选择国家，回答红/蓝/黄。"""
+    while True:
+        ans = input("请选择国家（回答颜色：红 / 蓝 / 黄）: ").strip()
+        try:
+            return Country.from_color(ans)
+        except ValueError as e:
+            print(f"  ⚠️ {e}，请重新输入")
 
-# =========================
 
-def capture_screen(client):
+def prompt_username() -> str:
+    """提示输入目标用户名（交易/组队时要识别的账号 ID）。"""
+    while True:
+        ans = input("请输入目标用户名: ").strip()
+        if ans:
+            return ans
+        print("  ⚠️ 用户名不能为空，请重新输入")
 
-    """获取远程屏幕截图"""
 
-    print("正在获取屏幕截图...")
+def prompt_channel() -> str:
+    """提示输入目标频道（如 Kanal 1）。"""
+    while True:
+        ans = input("请输入目标频道（如 Kanal 1）: ").strip()
+        if ans:
+            return ans
+        print("  ⚠️ 频道不能为空，请重新输入")
 
-    try:
 
-        # 使用已经验证成功的方式
-
-        client.captureScreen(SCREENSHOT_PATH)
-
-        if not os.path.exists(SCREENSHOT_PATH):
-
-            print("❌ 截图命令执行完成，但没有找到文件")
-
-            return None
-
-        # 将截图文件读取为 OpenCV / NumPy 图像
-
-        frame = cv2.imread(SCREENSHOT_PATH)
-
-        if frame is None:
-
-            print("❌ 截图文件存在，但 OpenCV 无法读取")
-
-            return None
-
-        print("✅ 截图成功")
-
-        print(f"画面尺寸: {frame.shape[1]} × {frame.shape[0]}")
-
-        return frame
-
-    except Exception as e:
-
-        print("❌ 截图失败")
-
-        print(f"错误类型: {type(e).__name__}")
-
-        print(f"错误信息: {e}")
-        return None
-
-# =========================
-# 打印 VisionResult
-# =========================
-
-def print_vision_result(result: VisionResult):
-
-    """输出 VisionResult，方便实机调试"""
-
+def build_config() -> RuntimeConfig:
+    """组装运行时定制配置。"""
     print("\n" + "=" * 50)
-
-    print("VisionResult")
-
+    print("请补充定制目标")
     print("=" * 50)
+    country = prompt_country()
+    username = prompt_username()
+    channel = prompt_channel()
+    print(f"\n配置：国家={country.value}，目标用户名={username}，目标频道={channel}")
+    return RuntimeConfig(country=country, username=username, channel=channel)
 
-    print(f"OCR 结果数量: {len(result.ocr_results)}")
 
-    if not result.ocr_results:
-
-        print("  （没有识别到文本）")
-
-    for item in result.ocr_results:
-
-        print(
-
-            f"  '{item.text}' "
-
-            f"(置信度 {item.confidence:.2f}) "
-
-            f"@ {item.position}"
-
-        )
-# =========================
-
-# 状态测试
-
-# =========================
-
-def test_game_state(vision, frame):
-
-    """
-    测试：
-    VisionEngine → VisionResult → GameState
-    """
-
-    print("\n[Vision] 正在分析当前画面...")
-
-    result = vision.observe(frame)
-
-    print_vision_result(result)
-
-    state = detect_game_state(result)
-
-    print("\n" + "=" * 50)
-
-    print("GameState")
-
-    print("=" * 50)
-
-    if state is None:
-
-        print("⚠️ 无法判断当前游戏状态")
-
-    else:
-
-        print(f"当前状态: {state.name}")
-
-        print(f"状态值: {state.value}")
-
-    return state
-# =========================
-
+# ===========================================================================
 # 主程序
-
-# =========================
-
-def main():
-
+# ===========================================================================
+def main() -> int:
     client = connect_vnc()
-
     if client is None:
         print("\n程序终止：VNC 尚未连接成功")
         return 1
-    
-    capturer = vnc_vision.ScreenCapturer(client)
-    controller = InputController(client)
 
-
+    vision = None  # 提前声明，避免 finally 中二次 NameError
     try:
-        print("\n[1/3] 检查屏幕")
         client.refreshScreen(incremental=False)
         screen_ok = check_screen(client)
-
         if not screen_ok:
-            print("\n⚠️ 当前环境暂不符合预期")
-            print("仍然继续进行截图测试...")
+            print("⚠️ 当前环境暂不符合预期，仍继续尝试运行...")
 
-        print("\n[2/3] 获取截图")
+        capturer = vnc_vision.ScreenCapturer(client)
+        controller = InputController(client)
 
-        frame = capture_screen(client)
-
-        if frame is None:
-            print("\n❌ 核心测试失败")
-            return 1
-
-        print("✅ VNC → NumPy 图像转换成功")
-
-        print("\n[3/3] 初始化 Vision")
-
-        vision = vnc_vision.VisionEngine(
-            ocr_backend="paddleocr",
-            languages=["ch"],
-            gpu=False
-        )
-
+        print("\n初始化 VisionEngine ...")
+        # CALIBRATE: OCR 后端/语言/GPU 按实际环境调整
+        vision = vnc_vision.VisionEngine(ocr_backend="paddleocr", languages=["ch"], gpu=False)
         print("✅ VisionEngine 初始化成功")
 
-        # -------------------------
-        # 4. 测试状态识别
-        # -------------------------
-        print("\n[4/4] 测试 GameState")
+        config = build_config()
 
-        state = test_game_state(vision, frame)
-
-        print("\n" + "=" * 50)
-        print("测试完成")
-        print("=" * 50)
-
-        if state is not None:
-            print(f"✅ 当前识别状态: {state.name}")
-        else:
-            print("⚠️ 当前画面暂时无法匹配 State")
+        lifecycle = OuterLifecycle(capturer, vision, controller, config)
+        lifecycle.run()
         return 0
 
+    except KeyboardInterrupt:
+        print("\n用户中断")
+        return 130
     except Exception as e:
-
-        print("\n❌ Vision 测试失败")
-
+        print("\n❌ 运行失败")
         print(f"错误类型: {type(e).__name__}")
-
         print(f"错误信息: {e}")
-
         return 1
-
     finally:
+        try:
+            client.disconnect()
+            print("\nVNC 连接已关闭")
+        except Exception:
+            pass
 
-        start = time.perf_counter()
-
-        frame = capture_screen(client)
-
-        t1 = time.perf_counter()
-
-        result = vision.observe(frame)
-
-        t2 = time.perf_counter()
-
-        state = detect_game_state(result)
-
-        t3 = time.perf_counter()
-
-        print(f"截图: {t1 - start:.3f}s")
-        print(f"OCR:  {t2 - t1:.3f}s")
-        print(f"状态: {t3 - t2:.3f}s")
-        print(f"总计: {t3 - start:.3f}s")
-
-        client.disconnect()
-
-        print("\nVNC 连接已关闭")
 
 if __name__ == "__main__":
-
     sys.exit(main())
