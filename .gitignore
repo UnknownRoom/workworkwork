@@ -5,4 +5,5 @@ __pycache__/
 .DS_Store
 .claude/settings.local.json
 calibration.json
+user_config.json
 debug_*.png

@@ -47,6 +47,13 @@ POS_USERNAME_FIELD = (0, 0)    # 用户名输入框
 POS_PASSWORD_FIELD = (0, 0)    # 密码输入框
 POS_REGISTER = (0, 0)          # 注册提交按钮
 
+# 国家选择页国旗模板（CALIBRATE: 对应 flag_*.png，用于识别并点击所选国家）
+FLAG_TEMPLATES: Dict[Country, str] = {
+    Country.RED: "flag_red.png",
+    Country.BLUE: "flag_blue.png",
+    Country.YELLOW: "flag_yellow.png",
+}
+
 # 三国地图坐标（CALIBRATE: 地图打开后点击的坐标，三国各一套，均为占位）
 COUNTRY_WAYPOINTS: Dict[Country, Dict[str, Tuple[int, int]]] = {
     Country.RED: {
@@ -170,6 +177,7 @@ class OuterLifecycle(_LifecycleBase):
         self.account: Dict[str, str] = {"username": "", "password": "", "email": ""}
         self.used_usernames: set = set()
         self._register_form_done = False
+        self._register_fields_filled = False
         self._login_form_done = False
         self._triarch_pool: List[str] = []
         self._triarch_index: int = 0
@@ -180,7 +188,9 @@ class OuterLifecycle(_LifecycleBase):
     # ------------------------------------------------------------------
     def run(self):
         logger.info("OuterLifecycle 启动")
-        self.change_default_language()
+        # TITLE 状态第一步：切换默认语言，是后续中文 OCR 识别的基础。
+        if not self.change_default_language():
+            logger.error("语言初始化失败，后续中文识别可能不可用，请检查 language.png")
 
         while self.running:
             # 每个角色周期只生成一次账号；重试（register/login/create 失败后 continue）
@@ -205,14 +215,33 @@ class OuterLifecycle(_LifecycleBase):
                 logger.info("本任务号 5 个角色已用完，应切换新任务号")
 
     # ------------------------------------------------------------------
-    # 修改默认语言（只执行一次）
+    # 修改默认语言（只执行一次，TITLE 状态第一步）
     # ------------------------------------------------------------------
-    def change_default_language(self):
+    def change_default_language(self) -> bool:
         if self.language_initialized:
-            return
-        # CALIBRATE: 实机确认「系统设置 -> 默认语言」的点击流程
-        logger.warning("CALIBRATE: change_default_language 未实现，需实机校准")
-        self.language_initialized = True
+            return True
+        ctx = self._ctx()
+        try:
+            frame = self.capturer.grab()
+        except Exception as exc:
+            logger.error("初始化语言：抓帧失败: %s", exc)
+            return False
+        ctx.frame = frame
+        # 用 language.png 模板定位语言按钮并点击，切换到中文。
+        # 这是后续所有中文状态签名识别的基础，必须在注册流程前完成。
+        ok = self._click_target(
+            ctx,
+            Target(
+                name="语言按钮",
+                kind="template",
+                template_path="language.png",
+                threshold=0.6,
+            ),
+        )
+        if ok:
+            self.language_initialized = True
+            logger.info("语言已切换为默认（中文）")
+        return ok
 
     # ------------------------------------------------------------------
     # 隐藏摆摊设置（游戏记忆，全局一次）
@@ -247,6 +276,7 @@ class OuterLifecycle(_LifecycleBase):
     def register(self) -> bool:
         ctx = self._ctx()
         self._register_form_done = False
+        self._register_fields_filled = False
 
         def do_click_register(c: Context) -> bool:
             # 标题页：鼠标左键点击「注册」（纯 OCR 识别）
@@ -283,40 +313,42 @@ class OuterLifecycle(_LifecycleBase):
     # 注册页表单填写（Tab 切换字段）
     # ------------------------------------------------------------------
     def _fill_register_form(self, c: Context) -> bool:
-        # 1) 点击用户名输入框，输入随机用户名
-        if not self._click_target(
-            c, Target(name="用户名输入框", kind="ocr", text="用户名", fuzzy=True)
-        ):
-            return False
-        self.controller.type_text(self.account["username"])
+        # 表单字段只填一次；协议勾选失败重试时不再重复输入，避免污染已填内容。
+        if not self._register_fields_filled:
+            # 1) 点击用户名输入框，输入随机用户名
+            if not self._click_target(
+                c, Target(name="用户名输入框", kind="ocr", text="用户名", fuzzy=True)
+            ):
+                return False
+            self.controller.type_text(self.account["username"])
 
-        # 2) tab -> 密码
-        self.controller.key_press("tab")
-        self.controller.type_text(self.account["password"])
+            # 2) tab -> 密码
+            self.controller.key_press("tab")
+            self.controller.type_text(self.account["password"])
 
-        # 3) tab -> 确认密码（默认密码连续输入两次）
-        self.controller.key_press("tab")
-        self.controller.type_text(self.account["password"])
+            # 3) tab -> 确认密码（默认密码连续输入两次）
+            self.controller.key_press("tab")
+            self.controller.type_text(self.account["password"])
 
-        # 4) tab -> 固定邮箱
-        self.controller.key_press("tab")
-        self.controller.type_text(self.account["email"])
+            # 4) tab -> 固定邮箱
+            self.controller.key_press("tab")
+            self.controller.type_text(self.account["email"])
 
-        # 5) end 键
-        self.controller.key_press("end")
+            # 5) end 键
+            self.controller.key_press("end")
+            self._register_fields_filled = True
 
         # 6) 根据 login.png 定位并勾选两个用户协议
         return self._agree_to_terms(c)
 
     def _agree_to_terms(self, c: Context) -> bool:
-        # CALIBRATE: login.png 为「同意用户协议」勾选框模板图（未勾选态），
-        # 两个协议各一个勾选框；需实机确认模板内容与勾选框位置。
-        matches = c.vision.find_template_all(c.frame, "login.png", threshold=0.6)
+        # box.png 为纯「同意用户协议」勾选框模板（未勾选态，15x19）；
+        # 两个协议各一个勾选框，点击每个匹配框中心。
+        matches = c.vision.find_template_all(c.frame, "box.png", threshold=0.6)
         if not matches:
             report_problem(
-                c.frame, c.vision, "未找到用户协议勾选框 (login.png)", name="register"
+                c.frame, c.vision, "未找到用户协议勾选框 (box.png)", name="register"
             )
-            c.running = False
             return False
         if len(matches) < 2:
             logger.warning("只找到 %d 个勾选框，需确认第二个协议位置（CALIBRATE）", len(matches))
@@ -400,7 +432,7 @@ class OuterLifecycle(_LifecycleBase):
         return ctx.last_state == GameState.GAME_START
 
     # ------------------------------------------------------------------
-    # 创建角色：GAME_START -> CREATE_ROLE -> LOADING -> MENU
+    # 创建角色：GAME_START -> CREATE_ROLE -> COUNTRY_SELECT -> LOADING -> MENU
     # ------------------------------------------------------------------
     def create_character(self) -> bool:
         ctx = self._ctx()
@@ -408,12 +440,14 @@ class OuterLifecycle(_LifecycleBase):
         def do_enter(c: Context) -> bool:
             return self._click_target(c, Target(name="点击进入游戏", kind="fixed", point=POS_ENTER_GAME))
 
-        def do_create(c: Context) -> bool:
-            # CALIBRATE: 创建战士（OCR 识别名「战士」）+ 绑定国家
+        def do_select_class(c: Context) -> bool:
+            # CALIBRATE: 创建角色页选战士（OCR 识别名「战士」），进入国家选择页。
             self.controller.click(*POS_WARRIOR_CLASS)
-            self._bind_country(c)
-            self.controller.click(*POS_CONFIRM_CREATE)
             return True
+
+        def do_bind_country(c: Context) -> bool:
+            # 国家选择页（「选择你的帝国」）：识别并点击所选国家国旗。
+            return self._bind_country(c)
 
         fsm = StateMachine(
             {
@@ -421,7 +455,10 @@ class OuterLifecycle(_LifecycleBase):
                     Transition(GameState.CREATE_ROLE, action=do_enter),
                 ],
                 GameState.CREATE_ROLE: [
-                    Transition(GameState.LOADING, action=do_create),
+                    Transition(GameState.COUNTRY_SELECT, action=do_select_class),
+                ],
+                GameState.COUNTRY_SELECT: [
+                    Transition(GameState.LOADING, action=do_bind_country),
                 ],
             },
             name="create_character",
@@ -431,9 +468,20 @@ class OuterLifecycle(_LifecycleBase):
         fsm.run(ctx, stop_state=GameState.MENU)
         return ctx.last_state == GameState.MENU
 
-    def _bind_country(self, ctx: Context) -> None:
-        # CALIBRATE: 第一个角色绑定国家（红/蓝/黄）的界面操作，需实机确认
-        logger.warning("CALIBRATE: 绑定国家 %s 未实现，需实机校准", self.config.country.value)
+    def _bind_country(self, ctx: Context) -> bool:
+        # 国家选择页：用国旗模板定位并点击用户选择的国家。
+        # CALIBRATE: flag_*.png 为整屏/卡片的国旗截图，模板匹配后点击其中心；
+        # 若点击中心无效，需实机校准为国旗卡片的精确点击点。
+        flag = FLAG_TEMPLATES[self.config.country]
+        return self._click_target(
+            ctx,
+            Target(
+                name=f"国家旗帜-{self.config.country.value}",
+                kind="template",
+                template_path=flag,
+                threshold=0.6,
+            ),
+        )
 
     # ------------------------------------------------------------------
     # 进入游戏内部循环

@@ -11,6 +11,7 @@ CALIBRATE 校准清单（实机跑通前逐项确认，详见各模块内的 # C
 """
 from __future__ import annotations
 
+import json
 import logging
 import sys
 
@@ -28,6 +29,9 @@ VNC_PORT = 5900
 VNC_PASSWORD = "123456"
 
 EXPECTED_SIZE = (1920, 1080)   # 预期分辨率
+
+# 用户定制持久化文件（保存国家等选项，避免每次启动重复选择）
+USER_CONFIG_PATH = "user_config.json"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,14 +74,51 @@ def check_screen(client) -> bool:
 # ===========================================================================
 # 运行时定制目标提示（纯文本回答）
 # ===========================================================================
+def _load_user_config() -> dict:
+    try:
+        with open(USER_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_user_config(data: dict) -> None:
+    with open(USER_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _yes(answer: str) -> bool:
+    return answer.strip().lower() in ("", "y", "yes")
+
+
 def prompt_country() -> Country:
-    """提示选择国家，回答红/蓝/黄。"""
-    while True:
-        ans = input("请选择国家（回答颜色：红 / 蓝 / 黄）: ").strip()
+    """提示选择国家，支持数字(1/2/3)或首字母(R/B/Y)，并询问是否一直保持该国家。"""
+    cfg = _load_user_config()
+    saved = cfg.get("country")
+    if saved:
         try:
-            return Country.from_color(ans)
+            saved_country = Country.from_color(saved)
+        except ValueError:
+            saved_country = None
+        if saved_country is not None:
+            ans = input(f"已保存国家：{saved_country.value}，是否沿用？(y/n，默认 y): ")
+            if _yes(ans):
+                print(f"  沿用国家：{saved_country.value}")
+                return saved_country
+
+    while True:
+        ans = input("请选择国家（1=红 2=蓝 3=黄，或输入 R/B/Y）: ").strip()
+        try:
+            country = Country.from_color(ans)
         except ValueError as e:
             print(f"  ⚠️ {e}，请重新输入")
+            continue
+        keep = input("是否一直保持当前国家选项？(y/n，默认 y): ")
+        if _yes(keep):
+            cfg["country"] = country.value
+            _save_user_config(cfg)
+            print(f"  已保存国家：{country.value}（下次启动自动沿用）")
+        return country
 
 
 def prompt_username() -> str:
@@ -89,13 +130,20 @@ def prompt_username() -> str:
         print("  ⚠️ 用户名不能为空，请重新输入")
 
 
+# 频道号/字母 -> 实际频道名（Kanal 1~5）
+_CHANNEL_MAP = {
+    "1": "Kanal 1", "2": "Kanal 2", "3": "Kanal 3", "4": "Kanal 4", "5": "Kanal 5",
+    "A": "Kanal 1", "B": "Kanal 2", "C": "Kanal 3", "D": "Kanal 4", "E": "Kanal 5",
+}
+
+
 def prompt_channel() -> str:
-    """提示输入目标频道（如 Kanal 1）。"""
+    """提示输入目标频道，支持数字(1-5)或大写字母(A-E)。"""
     while True:
-        ans = input("请输入目标频道（如 Kanal 1）: ").strip()
-        if ans:
-            return ans
-        print("  ⚠️ 频道不能为空，请重新输入")
+        ans = input("请输入目标频道（1-5，或大写字母 A-E）: ").strip().upper()
+        if ans in _CHANNEL_MAP:
+            return _CHANNEL_MAP[ans]
+        print("  ⚠️ 请输入 1-5 或 A-E")
 
 
 def build_config() -> RuntimeConfig:

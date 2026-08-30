@@ -67,12 +67,12 @@ class Country(Enum):
 
     @classmethod
     def from_color(cls, s: str) -> "Country":
-        """把用户输入（颜色中文/英文名）解析成 Country。"""
-        s = s.strip()
-        for c in cls:
-            if s in (c.value, c.name, c.name.lower(), c.name.capitalize()):
+        """把用户输入解析成 Country，支持数字(1/2/3)、首字母(R/B/Y)、颜色名(红/蓝/黄)。"""
+        key = s.strip().upper()
+        for i, c in enumerate(cls, start=1):
+            if key in (str(i), c.name, c.name[0], c.value.upper(), c.value):
                 return c
-        raise ValueError(f"无法识别的国家颜色: {s!r}（应为 红 / 蓝 / 黄）")
+        raise ValueError(f"无法识别的国家: {s!r}（应为 1=红 2=蓝 3=黄，或 R/B/Y）")
 
 
 @dataclass(frozen=True)
