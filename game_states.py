@@ -26,7 +26,7 @@ from enum import Enum, auto
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from VisionResults import OCRResult, VisionResult
-from calibration import polygon_to_bbox
+from calibration import normalize_text, polygon_to_bbox
 
 logger = logging.getLogger(__name__)
 
@@ -219,9 +219,9 @@ TEMPLATE_SIGNATURES: Dict[GameState, List[TemplateSignature]] = {
 # ===========================================================================
 def has_text(result: VisionResult, text: str, confidence: float = 0.0) -> bool:
     """是否存在精确匹配的文本（不区分大小写，可带置信度下限）。"""
-    target = text.strip().lower()
+    target = normalize_text(text)
     return any(
-        item.text.strip().lower() == target and item.confidence >= confidence
+        normalize_text(item.text) == target and item.confidence >= confidence
         for item in result.ocr_results
     )
 
@@ -234,11 +234,11 @@ def _in_roi(position: Tuple[int, int], roi: BBox) -> bool:
 
 
 def _signature_matched(sig: StateSignature, result: VisionResult) -> bool:
-    target = sig.text.strip().lower()
+    target = normalize_text(sig.text)
     for item in result.ocr_results:
         if item.confidence < sig.confidence:
             continue
-        text = item.text.strip().lower()
+        text = normalize_text(item.text)
         if sig.fuzzy:
             matched = target in text
         else:
@@ -321,11 +321,11 @@ def _learn_ocr_boxes(store, sigs, ocr_results) -> None:
         key = store.ocr_key(state, sig.text)
         if key in store.ocr_boxes:
             continue
-        target = sig.text.strip().lower()
+        target = normalize_text(sig.text)
         for item in ocr_results:
             if item.confidence < sig.confidence:
                 continue
-            text = item.text.strip().lower()
+            text = normalize_text(item.text)
             if sig.fuzzy:
                 matched = target in text
             else:

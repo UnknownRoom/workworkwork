@@ -124,7 +124,6 @@ class _LifecycleBase:
             pos = find_target(ctx.frame, replace(target, roi=None), ctx.vision)
         if pos is None:
             report_problem(ctx.frame, ctx.vision, f"未找到目标 {target.name!r}", name="lifecycle")
-            ctx.running = False
             return False
         ctx.controller.click(*pos)
         return True
@@ -144,7 +143,6 @@ class _LifecycleBase:
             pos = find_target(ctx.frame, replace(target, roi=None), ctx.vision)
         if pos is None:
             report_problem(ctx.frame, ctx.vision, f"未找到目标 {target.name!r}", name="lifecycle")
-            ctx.running = False
         return pos
 
     @staticmethod
@@ -185,6 +183,10 @@ class OuterLifecycle(_LifecycleBase):
         self.change_default_language()
 
         while self.running:
+            # 每个角色周期只生成一次账号；重试（register/login/create 失败后 continue）
+            # 复用同一个账号，避免因状态检测失败而每轮换新用户名死循环。
+            if not self.account["username"]:
+                self._generate_account()
             logger.info("开始第 %d 次角色创建", self.create_count + 1)
             if not self.register():
                 continue
@@ -194,6 +196,9 @@ class OuterLifecycle(_LifecycleBase):
                 continue
             self.enter_game()
             self.create_count += 1
+            # CALIBRATE: 目前不识别「用户名已存在」提示，成功后清空账号让下一角色生成新号。
+            # 若要碰撞后换号，需在 register() 内识别游戏「用户名已存在」文案再决定是否重新生成。
+            self.account["username"] = ""
             if self.create_count >= 5:
                 # CALIBRATE: 任务号每个账号 5 个角色用完启用新任务号
                 self.create_count = 0
@@ -241,7 +246,6 @@ class OuterLifecycle(_LifecycleBase):
 
     def register(self) -> bool:
         ctx = self._ctx()
-        self._generate_account()
         self._register_form_done = False
 
         def do_click_register(c: Context) -> bool:

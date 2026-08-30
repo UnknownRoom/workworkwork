@@ -165,10 +165,19 @@ class StateMachine:
                 break
             ctx.frame = frame
 
+            # 候选状态：表里的 key + 所有迁移目标 + stop_state，
+            # 否则 observe_state 永远观察不到终点状态，子状态机无法正常结束。
+            candidates = set(self.table.keys())
+            for transitions in self.table.values():
+                for tr in transitions:
+                    candidates.add(tr.target)
+            if stop_state is not None:
+                candidates.add(stop_state)
+
             observed = observe_state(
                 frame,
                 ctx.vision,
-                candidates=set(self.table.keys()),
+                candidates=candidates,
                 store=ctx.store,
                 config=ctx.config,
             )

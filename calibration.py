@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Dict, Optional, Tuple
 
 import cv2
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 Point = Tuple[int, int]
 BBox = Tuple[int, int, int, int]  # (x, y, w, h)
+
+
+def normalize_text(s: str) -> str:
+    """统一文本比较前的规范化：小写并去掉所有空白（含 OCR 可能插入的空格）。"""
+    return re.sub(r"\s+", "", s.strip().lower())
 
 
 def polygon_to_bbox(points, margin: int = 4) -> Optional[BBox]:

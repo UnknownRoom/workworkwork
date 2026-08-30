@@ -38,6 +38,7 @@ from typing import Any, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 from VisionResults import VisionResult,OCRResult
+from calibration import normalize_text
 
 # ---------------------------------------------------------------------------
 # 类型别名：坐标 / 边界框 / 识别结果
@@ -333,7 +334,7 @@ class VisionEngine:
 
         四点框为 OCR 文本框的四个顶点（可能为 None），已按 offset 换算到全屏坐标。
         """
-        target = target_text.lower()
+        target = normalize_text(target_text)
         best: Optional[Tuple[float, str, Point, Optional[List[Point]]]] = None
         ox, oy = offset
 
@@ -341,9 +342,9 @@ class VisionEngine:
             if conf < confidence:
                 continue
             if fuzzy:
-                matched = target in text.lower()
+                matched = target in normalize_text(text)
             else:
-                matched = text.strip().lower() == target
+                matched = normalize_text(text) == target
             if not matched:
                 continue
             cx, cy = self._poly_center(points)
