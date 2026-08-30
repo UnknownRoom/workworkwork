@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional, Tuple
 
 Point = tuple[int, int]
 
@@ -8,6 +8,7 @@ class OCRResult:
         text: str
         confidence: float
         position: Point
+        polygon: Optional[List[Tuple[int, int]]] = None
 
 @dataclass
 class VisionResult:

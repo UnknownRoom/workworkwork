@@ -20,11 +20,15 @@ CALIBRATE 校准清单（实机跑通前必须逐项确认）：
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from VisionResults import OCRResult, VisionResult
+from calibration import polygon_to_bbox
+
+logger = logging.getLogger(__name__)
 
 # 边界框：(x, y, w, h)，左上角坐标 + 宽高
 BBox = Tuple[int, int, int, int]
@@ -33,12 +37,14 @@ BBox = Tuple[int, int, int, int]
 class GameState(Enum):
     """游戏状态枚举（游戏外 → 游戏内）。"""
     # ---- 游戏外 ----
+    TITLE = auto()            # 标题页（登录/注册入口）
     GAME_START = auto()       # 登录后点击进入游戏
     CHECK_IN = auto()         # 注册页
     LOG_IN = auto()           # 登录页
     CHANNEL_SELECT = auto()   # 频道选择
     LOADING = auto()          # 正在连接服务器
     CREATE_ROLE = auto()      # 创建角色页
+    COUNTRY_SELECT = auto()    # 选择国家页
     MENU = auto()             # 游戏内主菜单
     # ---- 游戏内 ----
     INVENTORY = auto()        # 背包/装备界面（按 i）
@@ -76,6 +82,35 @@ class StateSignature:
     # CALIBRATE: 填该文本实际出现的屏幕区域 (x,y,w,h)；None 表示全屏（慢，尽量避免）。
     roi: Optional[BBox] = None
     confidence: float = 0.6
+    fuzzy: bool = False   # True 表示子串匹配（如 "Triarch" 匹配 "Triarch3"）
+
+
+@dataclass(frozen=True)
+class TemplateSignature:
+    """状态的一个模板图特征：模板匹配（matchTemplate 分数）超过 threshold 即命中。
+
+    template_path 可含 {country} 占位符，运行时按 config.country 解析为内置图片文件名。
+    """
+    template_path: str
+    threshold: float = 0.6
+    roi: Optional[BBox] = None
+
+
+# 国家 -> 内置战斗 UI 图片文件名（程序内置图片）。
+# {country} 占位符解析为国家关键字（red/blue/yellow），拼出如 red_fight.png。
+COUNTRY_TEMPLATES: Dict[Country, str] = {
+    Country.RED: "red_fight.png",
+    Country.BLUE: "blue_fight.png",
+    Country.YELLOW: "yellow_fight.png",
+}
+
+
+def resolve_template_path(path: str, config) -> str:
+    """把模板路径里的 {country} 占位符替换为国家关键字（如 red）。"""
+    if config is None or "{country}" not in path:
+        return path
+    keyword = COUNTRY_TEMPLATES[config.country].split("_")[0]
+    return path.replace("{country}", keyword)
 
 
 # ===========================================================================
@@ -86,6 +121,10 @@ class StateSignature:
 #   - roi 全部先置 None（回退全屏 OCR）；实机确认各文本位置后填具体区域以提速。
 #   - 判定用「全部签名命中」的精确匹配（strip + 忽略大小写）。
 STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
+    GameState.TITLE: [
+        StateSignature("注册"),
+        StateSignature("登录"),
+    ],
     GameState.LOADING: [
         StateSignature("正在连接服务器"),
         StateSignature("取消"),
@@ -93,6 +132,9 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
     GameState.CREATE_ROLE: [
         StateSignature("删除角色"),
         StateSignature("创建"),
+    ],
+    GameState.COUNTRY_SELECT: [
+        StateSignature("选择你的帝国"),
     ],
     GameState.CHANNEL_SELECT: [
         StateSignature("Kanal 1"),
@@ -129,8 +171,7 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
     ],
     # ---- 游戏内（占位初值，需实机校准） ----
     GameState.INVENTORY: [
-        StateSignature("装备"),
-        StateSignature("背包"),
+        StateSignature("物品栏"),
     ],
     GameState.AUTO_POTION: [
         StateSignature("自动药水"),
@@ -141,9 +182,6 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
     ],
     GameState.MAP_OPEN: [
         StateSignature("世界地图"),
-    ],
-    GameState.FIGHTING: [
-        StateSignature("经验值"),
     ],
     GameState.QUEST: [
         StateSignature("任务"),
@@ -162,6 +200,16 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
     ],
     GameState.RESPAWN: [
         StateSignature("复活点"),
+    ],
+}
+
+
+# ===========================================================================
+# 模板签名表（通用模板机制，战斗 UI 为首批数据）
+# ===========================================================================
+TEMPLATE_SIGNATURES: Dict[GameState, List[TemplateSignature]] = {
+    GameState.FIGHTING: [
+        TemplateSignature("{country}_fight.png", threshold=0.6),
     ],
 }
 
@@ -190,7 +238,12 @@ def _signature_matched(sig: StateSignature, result: VisionResult) -> bool:
     for item in result.ocr_results:
         if item.confidence < sig.confidence:
             continue
-        if item.text.strip().lower() != target:
+        text = item.text.strip().lower()
+        if sig.fuzzy:
+            matched = target in text
+        else:
+            matched = text == target
+        if not matched:
             continue
         if sig.roi is not None and not _in_roi(item.position, sig.roi):
             continue
@@ -230,54 +283,165 @@ def _safe_crop(frame, roi: BBox):
     return frame[y:y2, x:x2]
 
 
-def _collect_signatures(
+def _collect_ocr_signatures(
     candidates: Optional[Iterable[GameState]],
-) -> List[StateSignature]:
-    if candidates is None:
-        out: List[StateSignature] = []
-        for sigs in STATE_SIGNATURES.values():
-            out.extend(sigs)
-        return out
-    out = []
-    for state in candidates:
-        out.extend(STATE_SIGNATURES.get(state, []))
+) -> List[Tuple[GameState, StateSignature]]:
+    states = candidates if candidates is not None else list(STATE_SIGNATURES.keys())
+    out: List[Tuple[GameState, StateSignature]] = []
+    for state in states:
+        for sig in STATE_SIGNATURES.get(state, []):
+            out.append((state, sig))
     return out
+
+
+def _collect_template_signatures(
+    candidates: Optional[Iterable[GameState]],
+    config,
+) -> List[Tuple[GameState, TemplateSignature]]:
+    """收集模板签名并解析国家占位符；无法解析（config 缺失）的签名跳过。"""
+    states = candidates if candidates is not None else list(TEMPLATE_SIGNATURES.keys())
+    out: List[Tuple[GameState, TemplateSignature]] = []
+    for state in states:
+        for sig in TEMPLATE_SIGNATURES.get(state, []):
+            path = resolve_template_path(sig.template_path, config)
+            if "{country}" in path:
+                continue
+            out.append((state, TemplateSignature(template_path=path, threshold=sig.threshold, roi=sig.roi)))
+    return out
+
+
+def _learn_ocr_boxes(store, sigs, ocr_results) -> None:
+    """全屏 OCR 后，为缺少 ROI 的签名学习边界框并持久化到 store。"""
+    if store is None:
+        return
+    changed = False
+    for state, sig in sigs:
+        if sig.roi is not None:
+            continue
+        key = store.ocr_key(state, sig.text)
+        if key in store.ocr_boxes:
+            continue
+        target = sig.text.strip().lower()
+        for item in ocr_results:
+            if item.confidence < sig.confidence:
+                continue
+            text = item.text.strip().lower()
+            if sig.fuzzy:
+                matched = target in text
+            else:
+                matched = text == target
+            if not matched:
+                continue
+            bbox = polygon_to_bbox(item.polygon)
+            if bbox is None:
+                cx, cy = item.position
+                bbox = (max(0, cx - 4), max(0, cy - 4), 8, 8)
+            store.ocr_boxes[key] = bbox
+            changed = True
+            logger.info("学习 OCR 签名 '%s' -> roi=%s", sig.text, bbox)
+            break
+    if changed:
+        store.save()
+
+
+def _observe_templates(frame, vision, tpl_sigs, store) -> Dict[GameState, bool]:
+    """模板签名两阶段匹配（复用学习 bbox / 全屏学习），返回各状态是否命中。"""
+    hits: Dict[GameState, bool] = {}
+    for state, sig in tpl_sigs:
+        path = sig.template_path
+        roi = sig.roi
+        if roi is None and store is not None:
+            roi = store.template_boxes.get(store.template_key(path))
+
+        if roi is not None:
+            img = _safe_crop(frame, roi)
+            hit, corners, _ = vision.find_template_bbox(
+                img, path, threshold=sig.threshold, offset=roi[:2]
+            )
+        else:
+            hit, corners, _ = vision.find_template_bbox(
+                frame, path, threshold=sig.threshold
+            )
+            if hit and store is not None and corners:
+                bbox = polygon_to_bbox(corners, margin=8)
+                if bbox is not None:
+                    store.template_boxes[store.template_key(path)] = bbox
+                    store.save()
+                    logger.info("学习模板 '%s' -> 四点=%s", path, corners)
+
+        hits[state] = hits.get(state, True) and hit
+    return hits
+
+
+def _detect_state(
+    ocr_result: VisionResult,
+    template_hits: Dict[GameState, bool],
+    candidates: Optional[Iterable[GameState]],
+) -> Optional[GameState]:
+    """结合 OCR 与模板签名的综合判定（保持声明顺序，模板状态需显式命中）。"""
+    ordered = list(STATE_SIGNATURES.keys())
+    for s in TEMPLATE_SIGNATURES:
+        if s not in ordered:
+            ordered.append(s)
+
+    if candidates is not None:
+        candidate_set = set(candidates)
+        ordered = [s for s in ordered if s in candidate_set]
+
+    for state in ordered:
+        ocr_sigs = STATE_SIGNATURES.get(state, [])
+        if ocr_sigs and not all(_signature_matched(sig, ocr_result) for sig in ocr_sigs):
+            continue
+        if TEMPLATE_SIGNATURES.get(state) and not template_hits.get(state, False):
+            continue
+        return state
+    return None
 
 
 def observe_state(
     frame,
     vision,
     candidates: Optional[Iterable[GameState]] = None,
+    store=None,
+    config=None,
 ) -> Optional[GameState]:
     """
     在线观察当前状态：按签名表规划识别区域，只 OCR 目标小块，再判定状态。
 
     :param frame:      当前画面（BGR NumPy 数组）
-    :param vision:     VisionEngine 实例（需提供 read_all 方法）
+    :param vision:     VisionEngine 实例（需提供 read_all_detailed / find_template_bbox）
     :param candidates: 候选状态集合（FSM 用它收窄 OCR 范围，None 表示全量）
+    :param store:      CalibrationStore（缺 ROI 时全屏学习并持久化，有则复用）
+    :param config:     RuntimeConfig（解析模板路径的 {country} 占位符）
     :return: GameState 或 None
     """
-    sigs = _collect_signatures(candidates)
+    ocr_sigs = _collect_ocr_signatures(candidates)
+    tpl_sigs = _collect_template_signatures(candidates, config)
 
-    rois = set()
-    has_full = False
-    for sig in sigs:
-        if sig.roi is None:
-            has_full = True
-        else:
-            rois.add(tuple(sig.roi))
-
+    # ---- OCR：有学习 ROI 走快路径，缺 ROI 走全屏学习 ----
     ocr_results: List[OCRResult] = []
+    rois = set()
+    need_full = False
+    for state, sig in ocr_sigs:
+        roi = sig.roi
+        if roi is None and store is not None:
+            roi = store.ocr_boxes.get(store.ocr_key(state, sig.text))
+        if roi is None:
+            need_full = True
+        else:
+            rois.add(tuple(roi))
 
-    # 1) 先 OCR 所有非空 ROI（去重后每块只识别一次）
-    for roi in rois:
-        img = _safe_crop(frame, roi)
-        for text, conf, pos in vision.read_all(img, offset=roi[:2]):
-            ocr_results.append(OCRResult(text=text, confidence=conf, position=pos))
+    if need_full:
+        for text, conf, poly, center in vision.read_all_detailed(frame):
+            ocr_results.append(OCRResult(text=text, confidence=conf, position=center, polygon=poly))
+        _learn_ocr_boxes(store, ocr_sigs, ocr_results)
+    else:
+        for roi in rois:
+            img = _safe_crop(frame, roi)
+            for text, conf, poly, center in vision.read_all_detailed(img, offset=roi[:2]):
+                ocr_results.append(OCRResult(text=text, confidence=conf, position=center, polygon=poly))
 
-    # 2) 仅当存在无 ROI 的签名时才回退全屏 OCR（慢，尽量避免）
-    if has_full:
-        for text, conf, pos in vision.read_all(frame):
-            ocr_results.append(OCRResult(text=text, confidence=conf, position=pos))
+    # ---- 模板 ----
+    template_hits = _observe_templates(frame, vision, tpl_sigs, store)
 
-    return detect_game_state(VisionResult(ocr_results=ocr_results))
+    return _detect_state(VisionResult(ocr_results=ocr_results), template_hits, candidates)

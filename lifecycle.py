@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import logging
 import random
+from dataclasses import replace
 from typing import Dict, List, Optional, Tuple
 
+from calibration import polygon_to_bbox, report_problem
 from fsm import Context, RuntimeConfig, StateMachine, Transition
-from game_states import Country, GameState
+from game_states import Country, GameState, TEMPLATE_SIGNATURES, resolve_template_path
 from targets import Target, find_target
 
 logger = logging.getLogger(__name__)
@@ -78,11 +80,12 @@ COUNTRY_WAYPOINTS: Dict[Country, Dict[str, Tuple[int, int]]] = {
 # 公共基类：Context 构建 + 点击/按键/占位检测
 # ===========================================================================
 class _LifecycleBase:
-    def __init__(self, capturer, vision, controller, config: RuntimeConfig):
+    def __init__(self, capturer, vision, controller, config: RuntimeConfig, store=None):
         self.capturer = capturer
         self.vision = vision
         self.controller = controller
         self.config = config
+        self.store = store
 
     def _ctx(self) -> Context:
         return Context(
@@ -90,6 +93,7 @@ class _LifecycleBase:
             vision=self.vision,
             controller=self.controller,
             config=self.config,
+            store=self.store,
         )
 
     # ------------------------------------------------------------------
@@ -116,6 +120,11 @@ class _LifecycleBase:
             return False
         pos = find_target(ctx.frame, target, ctx.vision)
         if pos is None:
+            # 异常兜底：忽略 ROI 全屏重扫一次
+            pos = find_target(ctx.frame, replace(target, roi=None), ctx.vision)
+        if pos is None:
+            report_problem(ctx.frame, ctx.vision, f"未找到目标 {target.name!r}", name="lifecycle")
+            ctx.running = False
             return False
         ctx.controller.click(*pos)
         return True
@@ -129,7 +138,14 @@ class _LifecycleBase:
             return None
         if ctx.frame is None:
             return None
-        return find_target(ctx.frame, target, ctx.vision)
+        pos = find_target(ctx.frame, target, ctx.vision)
+        if pos is None:
+            # 异常兜底：忽略 ROI 全屏重扫一次
+            pos = find_target(ctx.frame, replace(target, roi=None), ctx.vision)
+        if pos is None:
+            report_problem(ctx.frame, ctx.vision, f"未找到目标 {target.name!r}", name="lifecycle")
+            ctx.running = False
+        return pos
 
     @staticmethod
     def _press(ctx: Context, key: str) -> bool:
@@ -147,13 +163,19 @@ class _LifecycleBase:
 # 外层生命周期：一个完整账号周期（注册->登录->创建->游戏内）
 # ===========================================================================
 class OuterLifecycle(_LifecycleBase):
-    def __init__(self, capturer, vision, controller, config: RuntimeConfig):
-        super().__init__(capturer, vision, controller, config)
+    def __init__(self, capturer, vision, controller, config: RuntimeConfig, store=None):
+        super().__init__(capturer, vision, controller, config, store)
         self.running = True
         self.create_count = 0
         self.language_initialized = False
         self.hide_stall_initialized = False
-        self.account: Dict[str, str] = {"username": "", "password": ""}
+        self.account: Dict[str, str] = {"username": "", "password": "", "email": ""}
+        self.used_usernames: set = set()
+        self._register_form_done = False
+        self._login_form_done = False
+        self._triarch_pool: List[str] = []
+        self._triarch_index: int = 0
+        self._current_triarch: str = ""
 
     # ------------------------------------------------------------------
     # 全局一次性设置（游戏记忆，整个生命周期只执行一次）
@@ -198,25 +220,52 @@ class OuterLifecycle(_LifecycleBase):
         self.hide_stall_initialized = True
 
     # ------------------------------------------------------------------
-    # 注册：CHECK_IN -> LOG_IN
+    # 注册：TITLE -> CHECK_IN -> LOG_IN
     # ------------------------------------------------------------------
+    def _generate_account(self) -> None:
+        """生成新账号：随机用户名（会话内不重复）+ 固定密码/邮箱，记忆供登录复用。"""
+        while True:
+            username = f"task{random.randint(100000, 999999)}"
+            if username not in self.used_usernames:
+                self.used_usernames.add(username)
+                break
+        self.account = {
+            "username": username,
+            "password": "12345678",   # 默认密码（连续两次：密码 + 确认密码）
+            "email": "1111@qq.com",   # 固定邮箱
+        }
+        logger.info(
+            "生成新账号: 用户名=%s 密码=%s 邮箱=%s",
+            self.account["username"], self.account["password"], self.account["email"],
+        )
+
     def register(self) -> bool:
         ctx = self._ctx()
+        self._generate_account()
+        self._register_form_done = False
 
-        def do_register(c: Context) -> bool:
-            # CALIBRATE: 生成账号规则需按游戏要求；此处用 ASCII 随机账号
-            if not self.account["username"]:
-                self.account["username"] = f"task{random.randint(100000, 999999)}"
-                self.account["password"] = f"{random.randint(10000000, 99999999)}"
-            logger.info("注册账号: %s", self.account["username"])
-            # CALIBRATE: 填写注册表单并提交（字段坐标见 POS_*）
-            self.controller.type_text(self.account["username"])
-            return True
+        def do_click_register(c: Context) -> bool:
+            # 标题页：鼠标左键点击「注册」（纯 OCR 识别）
+            return self._click_target(
+                c, Target(name="注册按钮", kind="ocr", text="注册", fuzzy=True)
+            )
+
+        def do_fill_form(c: Context) -> bool:
+            # 注册页：填写表单 + 勾选用户协议（只填一次，避免状态未推进时重复输入）
+            if self._register_form_done:
+                return True
+            if self._fill_register_form(c):
+                self._register_form_done = True
+                return True
+            return False
 
         fsm = StateMachine(
             {
+                GameState.TITLE: [
+                    Transition(GameState.CHECK_IN, action=do_click_register),
+                ],
                 GameState.CHECK_IN: [
-                    Transition(GameState.LOG_IN, action=do_register),
+                    Transition(GameState.LOG_IN, action=do_fill_form),
                 ],
             },
             name="register",
@@ -227,22 +276,107 @@ class OuterLifecycle(_LifecycleBase):
         return ctx.last_state == GameState.LOG_IN
 
     # ------------------------------------------------------------------
-    # 登录：LOG_IN -> CHANNEL_SELECT -> GAME_START
+    # 注册页表单填写（Tab 切换字段）
     # ------------------------------------------------------------------
+    def _fill_register_form(self, c: Context) -> bool:
+        # 1) 点击用户名输入框，输入随机用户名
+        if not self._click_target(
+            c, Target(name="用户名输入框", kind="ocr", text="用户名", fuzzy=True)
+        ):
+            return False
+        self.controller.type_text(self.account["username"])
+
+        # 2) tab -> 密码
+        self.controller.key_press("tab")
+        self.controller.type_text(self.account["password"])
+
+        # 3) tab -> 确认密码（默认密码连续输入两次）
+        self.controller.key_press("tab")
+        self.controller.type_text(self.account["password"])
+
+        # 4) tab -> 固定邮箱
+        self.controller.key_press("tab")
+        self.controller.type_text(self.account["email"])
+
+        # 5) end 键
+        self.controller.key_press("end")
+
+        # 6) 根据 login.png 定位并勾选两个用户协议
+        return self._agree_to_terms(c)
+
+    def _agree_to_terms(self, c: Context) -> bool:
+        # CALIBRATE: login.png 为「同意用户协议」勾选框模板图（未勾选态），
+        # 两个协议各一个勾选框；需实机确认模板内容与勾选框位置。
+        matches = c.vision.find_template_all(c.frame, "login.png", threshold=0.6)
+        if not matches:
+            report_problem(
+                c.frame, c.vision, "未找到用户协议勾选框 (login.png)", name="register"
+            )
+            c.running = False
+            return False
+        if len(matches) < 2:
+            logger.warning("只找到 %d 个勾选框，需确认第二个协议位置（CALIBRATE）", len(matches))
+        for corners, score in matches[:2]:
+            xs = [p[0] for p in corners]
+            ys = [p[1] for p in corners]
+            cx = (min(xs) + max(xs)) // 2
+            cy = (min(ys) + max(ys)) // 2
+            logger.info("勾选用户协议 @ (%d, %d), score=%.3f", cx, cy, score)
+            c.controller.click(cx, cy)
+        return True
+
+    # ------------------------------------------------------------------
+    # 登录： LOG_IN -> CHANNEL_SELECT -> GAME_START
+    # ------------------------------------------------------------------
+    def _next_triarch_option(self) -> str:
+        """五个 Triarch 选项（Triarch 1~Triarch 5）洗牌后依次取用（不重复），取完重新洗牌循环。"""
+        if self._triarch_index >= len(self._triarch_pool):
+            self._triarch_pool = [f"Triarch {i}" for i in range(1, 6)]
+            random.shuffle(self._triarch_pool)
+            self._triarch_index = 0
+            logger.info("Triarch 选项池重新洗牌: %s", self._triarch_pool)
+        opt = self._triarch_pool[self._triarch_index]
+        self._triarch_index += 1
+        logger.info("选择 Triarch 选项: %s（第 %d/5）", opt, self._triarch_index)
+        return opt
+
     def login(self) -> bool:
         ctx = self._ctx()
+        self._login_form_done = False
+        self._current_triarch = self._next_triarch_option()
+
+        def do_click_triarch(c: Context) -> bool:
+            # 启动器：单击本轮选中的 Triarch 选项进入登录页
+            return self._click_target(
+                c, Target(name="Triarch 启动器", kind="ocr", text=self._current_triarch, fuzzy=True)
+            )
 
         def do_submit(c: Context) -> bool:
-            # CALIBRATE: 点击用户名框 -> 输入 -> 点密码框 -> 输入 -> 点登录
+            if self._login_form_done:
+                return True
+            # 1) 识别「请输入你的账号」输入框 -> 定位 -> 单击
+            if not self._click_target(
+                c, Target(name="账号输入框", kind="ocr", text="请输入你的账号")
+            ):
+                return False
+            # 2) 输入用户名
             self.controller.type_text(self.account["username"])
+            # 3) tab -> 密码框
+            self.controller.key_press("tab")
+            # 4) 输入默认密码
             self.controller.type_text(self.account["password"])
-            return self._click_target(c, Target(name="登录按钮", kind="fixed", point=POS_LOGIN))
+            # 5) enter 提交
+            self.controller.key_press("enter")
+            self._login_form_done = True
+            return True
 
         def do_select_channel(c: Context) -> bool:
-            # CALIBRATE: 频道名在屏幕上出现的区域需校准 roi
+            # 五个频道随机选一个
+            channel = random.choice([f"Kanal {i}" for i in range(1, 6)])
+            logger.info("随机选择频道: %s", channel)
             return self._click_target(
                 c,
-                Target(name="目标频道", kind="ocr", text=self.config.channel, fuzzy=True),
+                Target(name="目标频道", kind="ocr", text=channel, fuzzy=True),
             )
 
         fsm = StateMachine(
@@ -303,7 +437,7 @@ class OuterLifecycle(_LifecycleBase):
     def enter_game(self):
         logger.info("进入游戏")
         game_loop = GameLifecycle(
-            self.capturer, self.vision, self.controller, self.config
+            self.capturer, self.vision, self.controller, self.config, self.store
         )
         game_loop.run()
 
@@ -312,14 +446,17 @@ class OuterLifecycle(_LifecycleBase):
 # 内层生命周期：游戏内从主菜单到交易完整流程
 # ===========================================================================
 class GameLifecycle(_LifecycleBase):
-    def __init__(self, capturer, vision, controller, config: RuntimeConfig):
-        super().__init__(capturer, vision, controller, config)
+    def __init__(self, capturer, vision, controller, config: RuntimeConfig, store=None):
+        super().__init__(capturer, vision, controller, config, store)
         # 每角色一次（新角色需要；游戏会记忆的设置不在这里）
         self.equip_weapon_done = False
         self.auto_potion_done = False
+        self.templates_initialized = False
 
     def run(self):
         ctx = self._ctx()
+        if not self._initialize_templates(ctx):
+            return
         fsm = StateMachine(
             self._table(),
             name="game",
@@ -327,6 +464,52 @@ class GameLifecycle(_LifecycleBase):
             max_attempts=self.config.max_attempts,
         )
         fsm.run(ctx)
+
+    # ------------------------------------------------------------------
+    # 首次循环初始化：用内置图片全屏搜索游戏内 UI（置信度 > 0.6），记录四点坐标
+    # ------------------------------------------------------------------
+    def _initialize_templates(self, ctx: Context) -> bool:
+        if self.templates_initialized:
+            return True
+        self.templates_initialized = True
+        if self.store is None:
+            return True
+
+        frame = None
+        try:
+            frame = ctx.capturer.grab()
+        except Exception as exc:
+            logger.error("[game] 初始化模板抓帧失败: %s", exc)
+            ctx.running = False
+            return False
+        ctx.frame = frame
+
+        for sigs in TEMPLATE_SIGNATURES.values():
+            for sig in sigs:
+                path = resolve_template_path(sig.template_path, self.config)
+                key = self.store.template_key(path)
+                if key in self.store.template_boxes:
+                    continue  # 已学习，跳过
+                hit, corners, score = self.vision.find_template_bbox(
+                    frame, path, threshold=sig.threshold
+                )
+                if not hit:
+                    report_problem(
+                        frame, self.vision,
+                        f"初始化模板 '{path}' 未命中（阈值 {sig.threshold}）",
+                        name="game",
+                    )
+                    ctx.running = False
+                    return False
+                bbox = polygon_to_bbox(corners, margin=8)
+                if bbox is not None:
+                    self.store.template_boxes[key] = bbox
+                    self.store.save()
+                    logger.info(
+                        "[game] 初始化模板 '%s' -> 四点坐标=%s (bbox=%s, score=%.3f)",
+                        path, corners, bbox, score,
+                    )
+        return True
 
     # ------------------------------------------------------------------
     # 迁移表：MENU -> ... -> TRADE（线性流程，NPC 相关步骤带按 R 补救）

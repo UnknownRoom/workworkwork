@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from game_states import Country, GameState, observe_state
+from calibration import report_problem
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class Context:
     attempts: Dict[str, int] = field(default_factory=dict)  # 每状态重试计数
     last_state: Optional[GameState] = None                  # 最近观察到的状态
     frame: Any = None                                       # 本循环最新帧（供 action 复用，避免重复抓帧）
+    store: Any = None                                       # CalibrationStore（学习/复用 ROI 与模板四点框）
 
 
 @dataclass
@@ -110,17 +112,18 @@ class StateMachine:
     # ------------------------------------------------------------------
     def _default_unknown(self, ctx: Context, state: Optional[GameState], frame=None) -> None:
         ctx.attempts["__unknown__"] = ctx.attempts.get("__unknown__", 0) + 1
-        if frame is not None:
-            import cv2
-            # CALIBRATE: 截图留档便于排查（调试用，可关闭）。
-            cv2.imwrite(f"debug_{self.name}_unknown.png", frame)
         # 尝试 esc 关闭可能的弹窗，再重试
         try:
             ctx.controller.key_press("escape")
         except Exception:
             pass
         if ctx.attempts["__unknown__"] >= self.max_attempts:
+            reason = (
+                f"未知状态{' ' + state.name if state is not None else ''}"
+                f"（连续 {self.max_attempts} 次无法识别）"
+            )
             logger.warning("[%s] 未知状态重试耗尽，终止本轮", self.name)
+            report_problem(frame, ctx.vision, reason, name=self.name)
             ctx.running = False
 
     # ------------------------------------------------------------------
@@ -162,7 +165,13 @@ class StateMachine:
                 break
             ctx.frame = frame
 
-            observed = observe_state(frame, ctx.vision)
+            observed = observe_state(
+                frame,
+                ctx.vision,
+                candidates=set(self.table.keys()),
+                store=ctx.store,
+                config=ctx.config,
+            )
             ctx.last_state = observed
 
             # 到达终点状态

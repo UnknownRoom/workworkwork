@@ -15,6 +15,7 @@ import logging
 import sys
 
 import vnc_vision
+from calibration import CalibrationStore
 from fsm import RuntimeConfig
 from game_states import Country
 from input_controller import InputController
@@ -135,7 +136,9 @@ def main() -> int:
 
         config = build_config()
 
-        lifecycle = OuterLifecycle(capturer, vision, controller, config)
+        store = CalibrationStore(path="calibration.json")
+
+        lifecycle = OuterLifecycle(capturer, vision, controller, config, store)
         lifecycle.run()
         return 0
 

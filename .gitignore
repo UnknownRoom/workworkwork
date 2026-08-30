@@ -4,3 +4,5 @@ __pycache__/
 .vscode/
 .DS_Store
 .claude/settings.local.json
+calibration.json
+debug_*.png

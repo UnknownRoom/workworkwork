@@ -19,6 +19,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from calibration import polygon_to_bbox
+
 logger = logging.getLogger(__name__)
 
 Point = Tuple[int, int]
@@ -50,9 +52,9 @@ def _safe_crop(frame: np.ndarray, roi: BBox) -> np.ndarray:
     return frame[y:y2, x:x2]
 
 
-def find_target(frame: np.ndarray, target: Target, vision) -> Optional[Point]:
+def find_target_bbox(frame: np.ndarray, target: Target, vision) -> Optional[BBox]:
     """
-    在 frame 中寻找 target，返回命中点的全屏中心坐标；未命中返回 None。
+    在 frame 中寻找 target，返回命中目标的边界框 (x, y, w, h)；未命中返回 None。
 
     roi 存在时先裁剪，只对 ROI 做识别，坐标用 offset=roi[:2] 换算回全屏。
     """
@@ -67,25 +69,46 @@ def find_target(frame: np.ndarray, target: Target, vision) -> Optional[Point]:
             logger.warning("Target %r 未指定 roi，将全屏 OCR（慢）", target.name)
 
     if target.kind == "ocr":
-        hit, _, _, center = vision.detect_text(
+        hit, _text, _conf, center, poly = vision.detect_text_bbox(
             image,
             target.text,
             confidence=target.confidence,
             offset=offset,
             fuzzy=target.fuzzy,
         )
-        return center if hit else None
+        if not hit:
+            return None
+        bbox = polygon_to_bbox(poly)
+        if bbox is not None:
+            return bbox
+        # 无四点信息时用中心构造退化 bbox
+        return (max(0, center[0] - 4), max(0, center[1] - 4), 8, 8)
 
     if target.kind == "template":
-        hit, center = vision.find_template(
+        hit, corners, _score = vision.find_template_bbox(
             image,
             target.template_path,
             threshold=target.threshold,
             offset=offset,
         )
-        return center if hit else None
+        if not hit:
+            return None
+        return polygon_to_bbox(corners, margin=0)
 
     if target.kind == "fixed":
-        return (target.point[0] + offset[0], target.point[1] + offset[1])
+        x = target.point[0] + offset[0]
+        y = target.point[1] + offset[1]
+        return (x, y, 0, 0)
 
     raise ValueError(f"不支持的 Target.kind: {target.kind!r}")
+
+
+def find_target(frame: np.ndarray, target: Target, vision) -> Optional[Point]:
+    """
+    在 frame 中寻找 target，返回命中点的全屏中心坐标；未命中返回 None。
+    """
+    bbox = find_target_bbox(frame, target, vision)
+    if bbox is None:
+        return None
+    x, y, w, h = bbox
+    return (x + w // 2, y + h // 2)

@@ -320,6 +320,45 @@ class VisionEngine:
     # ------------------------------------------------------------------
     # OCR 文本识别与定位
     # ------------------------------------------------------------------
+    def detect_text_bbox(
+        self,
+        image: np.ndarray,
+        target_text: str,
+        confidence: float = 0.6,
+        offset: Tuple[int, int] = (0, 0),
+        fuzzy: bool = False,
+    ) -> Tuple[bool, Optional[str], float, Optional[Point], Optional[List[Point]]]:
+        """
+        在图像/ROI 中寻找目标文本，返回 (是否命中, 匹配文本, 置信度, 中心坐标, 四点框)。
+
+        四点框为 OCR 文本框的四个顶点（可能为 None），已按 offset 换算到全屏坐标。
+        """
+        target = target_text.lower()
+        best: Optional[Tuple[float, str, Point, Optional[List[Point]]]] = None
+        ox, oy = offset
+
+        for points, text, conf in self._read_text(image):
+            if conf < confidence:
+                continue
+            if fuzzy:
+                matched = target in text.lower()
+            else:
+                matched = text.strip().lower() == target
+            if not matched:
+                continue
+            cx, cy = self._poly_center(points)
+            if points is not None:
+                poly = [(int(round(p[0])) + ox, int(round(p[1])) + oy) for p in points]
+            else:
+                poly = None
+            center = (cx + ox, cy + oy)
+            if best is None or conf > best[0]:
+                best = (conf, text, center, poly)
+
+        if best is None:
+            return (False, None, 0.0, None, None)
+        return (True, best[1], best[0], best[2], best[3])
+
     def detect_text(
         self,
         image: np.ndarray,
@@ -338,25 +377,35 @@ class VisionEngine:
         :param fuzzy:       True 表示模糊匹配（target_text 是识别文本的子串，忽略大小写）
         :return: (是否命中, 匹配文本, 置信度, 全屏中心坐标)
         """
-        target = target_text.lower()
-        best: Optional[Tuple[float, str, Point]] = None
+        hit, text, conf, center, _poly = self.detect_text_bbox(
+            image, target_text, confidence=confidence, offset=offset, fuzzy=fuzzy
+        )
+        if not hit:
+            return (False, None, 0.0, None)
+        return (True, text, conf, center)
 
+    def read_all_detailed(
+        self,
+        image: np.ndarray,
+        offset: Tuple[int, int] = (0, 0),
+        min_confidence: float = 0.0,
+    ) -> List[Tuple[str, float, Optional[List[Point]], Point]]:
+        """返回图像中所有文本： (文本, 置信度, 四点框, 全屏中心坐标)。
+
+        四点框为 OCR 文本框的四个顶点（可能为 None），已按 offset 换算到全屏坐标。
+        """
+        ox, oy = offset
+        out = []
         for points, text, conf in self._read_text(image):
-            if conf < confidence:
-                continue
-            if fuzzy:
-                matched = target in text.lower()
-            else:
-                matched = text.strip().lower() == target
-            if not matched:
+            if conf < min_confidence:
                 continue
             cx, cy = self._poly_center(points)
-            if best is None or conf > best[0]:
-                best = (conf, text, (cx + offset[0], cy + offset[1]))
-
-        if best is None:
-            return (False, None, 0.0, None)
-        return (True, best[1], best[0], best[2])
+            if points is not None:
+                poly = [(int(round(p[0])) + ox, int(round(p[1])) + oy) for p in points]
+            else:
+                poly = None
+            out.append((text, conf, poly, (cx + ox, cy + oy)))
+        return out
 
     def read_all(
         self,
@@ -365,22 +414,102 @@ class VisionEngine:
         min_confidence: float = 0.0,
     ) -> List[Tuple[str, float, Point]]:
         """返回图像中所有文本及其全屏坐标（可作调试/兜底）。"""
-        out = []
-        for points, text, conf in self._read_text(image):
-            if conf < min_confidence:
-                continue
-            cx, cy = self._poly_center(points)
-            out.append((text, conf, (cx + offset[0], cy + offset[1])))
-        return out
+        return [
+            (text, conf, center)
+            for text, conf, _poly, center in self.read_all_detailed(
+                image, offset=offset, min_confidence=min_confidence
+            )
+        ]
 
     # ------------------------------------------------------------------
     # 模板匹配
     # ------------------------------------------------------------------
     @staticmethod
+    def find_template_bbox(
+        image: np.ndarray,
+        template_path: str,
+        threshold: float = 0.6,
+        offset: Tuple[int, int] = (0, 0),
+    ) -> Tuple[bool, Optional[List[Point]], float]:
+        """
+        模板匹配：定位固定 UI（如战斗界面），返回 (是否命中, 边缘四点坐标, 匹配分数)。
+
+        四点坐标 = 模板矩形四角 (左上, 右上, 右下, 左下)，已按 offset 换算到全屏坐标。
+        """
+        template = cv2.imread(template_path, cv2.IMREAD_COLOR)
+        if template is None:
+            raise FileNotFoundError(f"无法读取模板图片: {template_path}")
+
+        res = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(res)
+        if max_val < threshold:
+            return (False, None, float(max_val))
+
+        th, tw = template.shape[:2]
+        x = int(max_loc[0]) + offset[0]
+        y = int(max_loc[1]) + offset[1]
+        corners = [
+            (x, y),
+            (x + tw, y),
+            (x + tw, y + th),
+            (x, y + th),
+        ]
+        return (True, corners, float(max_val))
+
+    @staticmethod
+    def find_template_all(
+        image: np.ndarray,
+        template_path: str,
+        threshold: float = 0.6,
+        offset: Tuple[int, int] = (0, 0),
+        max_count: Optional[int] = None,
+    ) -> List[Tuple[List[Point], float]]:
+        """
+        多目标模板匹配：返回所有超过阈值的匹配 [(四点坐标, 分数), ...]，按分数降序。
+
+        用于页面上存在多个相同元素（如两个「同意用户协议」勾选框）的场景。
+        """
+        template = cv2.imread(template_path, cv2.IMREAD_COLOR)
+        if template is None:
+            raise FileNotFoundError(f"无法读取模板图片: {template_path}")
+
+        res = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+        th, tw = template.shape[:2]
+        ox, oy = offset
+        result = res.copy()
+        matches: List[Tuple[List[Point], float]] = []
+
+        while True:
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            if max_val < threshold:
+                break
+            x = int(max_loc[0]) + ox
+            y = int(max_loc[1]) + oy
+            corners = [
+                (x, y),
+                (x + tw, y),
+                (x + tw, y + th),
+                (x, y + th),
+            ]
+            matches.append((corners, float(max_val)))
+            if max_count is not None and len(matches) >= max_count:
+                break
+            # 抑制已匹配区域，继续寻找下一个匹配
+            cv2.rectangle(
+                result,
+                (max_loc[0], max_loc[1]),
+                (max_loc[0] + tw, max_loc[1] + th),
+                0,
+                -1,
+            )
+
+        return matches
+
+    @staticmethod
     def find_template(
         image: np.ndarray,
         template_path: str,
-        threshold: float = 0.8,
+        threshold: float = 0.6,
         offset: Tuple[int, int] = (0, 0),
     ) -> Tuple[bool, Optional[Point]]:
         """
@@ -392,20 +521,14 @@ class VisionEngine:
         :param offset:        ROI 在全屏中的偏移 (ox, oy)
         :return: (是否匹配, 全屏点击坐标)
         """
-        template = cv2.imread(template_path, cv2.IMREAD_COLOR)
-        if template is None:
-            raise FileNotFoundError(f"无法读取模板图片: {template_path}")
-
-        res = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
-        if max_val < threshold:
+        hit, corners, _score = VisionEngine.find_template_bbox(
+            image, template_path, threshold=threshold, offset=offset
+        )
+        if not hit:
             return (False, None)
-
-        th, tw = template.shape[:2]
-        # max_loc 是模板左上角，点击坐标取中心
-        cx = max_loc[0] + tw // 2 + offset[0]
-        cy = max_loc[1] + th // 2 + offset[1]
-        return (True, (int(cx), int(cy)))
+        xs = [p[0] for p in corners]
+        ys = [p[1] for p in corners]
+        return (True, ((min(xs) + max(xs)) // 2, (min(ys) + max(ys)) // 2))
     
     def observe(self, frame: np.ndarray) -> VisionResult:
         """分析当前画面，并生成 VisionResult。"""
