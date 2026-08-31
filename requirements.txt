@@ -1,5 +1,7 @@
 vncdotool==1.3.0
+paddlepaddle
 paddleocr
 numpy
 easyocr
+torch
 opencv-contrib-python

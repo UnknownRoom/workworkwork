@@ -177,14 +177,28 @@ def main() -> int:
         # 先让用户回答定制目标，再加载慢的 OCR 模型，避免交互前长时间无输出
         config = build_config()
 
+        print("\n创建 ScreenCapturer ...", flush=True)
         capturer = vnc_vision.ScreenCapturer(client)
-        controller = InputController(client)
+        print("✅ ScreenCapturer 就绪", flush=True)
 
-        print("\n初始化 VisionEngine ...")
-        print("正在加载 OCR 模型，PaddleOCR 首次运行会下载模型，可能需要数分钟，请耐心等待...")
+        controller = InputController(client)
+        print("✅ InputController 就绪", flush=True)
+
+        print("\n初始化 VisionEngine ...", flush=True)
+        print("正在加载 OCR 模型，首次运行会下载模型，可能需要数分钟，请耐心等待...", flush=True)
         # CALIBRATE: OCR 后端/语言/GPU 按实际环境调整
-        vision = vnc_vision.VisionEngine(ocr_backend="paddleocr", languages=["ch"], gpu=False)
-        print("✅ VisionEngine 初始化成功")
+        try:
+            vision = vnc_vision.VisionEngine(ocr_backend="paddleocr", languages=["ch"], gpu=False)
+        except Exception as e:
+            print("\n❌ OCR 引擎初始化失败", flush=True)
+            print(f"错误: {e}", flush=True)
+            print(
+                "提示: paddleocr 后端需要 paddlepaddle 框架（pip install paddlepaddle）；\n"
+                "      或改用 easyocr 后端（需先下载模型）。",
+                flush=True,
+            )
+            raise
+        print("✅ VisionEngine 初始化成功", flush=True)
 
         store = CalibrationStore(path="calibration.json")
 
