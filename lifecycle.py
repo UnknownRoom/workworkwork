@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Tuple
 
 from calibration import polygon_to_bbox, report_problem
 from fsm import Context, RuntimeConfig, StateMachine, Transition
-from game_states import Country, GameState, TEMPLATE_SIGNATURES, resolve_template_path
+from game_states import Country, GameState, TEMPLATE_SIGNATURES, observe_state, resolve_template_path
 from targets import Target, find_target
 
 logger = logging.getLogger(__name__)
@@ -134,7 +134,6 @@ class _LifecycleBase:
             report_problem(ctx.frame, ctx.vision, f"未找到目标 {target.name!r}", name="lifecycle")
             return False
         ctx.controller.click(*pos)
-        time.sleep(5)
         return True
 
     # ------------------------------------------------------------------
@@ -153,6 +152,37 @@ class _LifecycleBase:
         if pos is None:
             report_problem(ctx.frame, ctx.vision, f"未找到目标 {target.name!r}", name="lifecycle")
         return pos
+
+    def _wait_for_state(
+        self,
+        ctx: Context,
+        state: GameState,
+        timeout: float = 15.0,
+        interval: float = 0.5,
+        candidates: Optional[Tuple[GameState, ...]] = None,
+    ) -> bool:
+        """抓帧轮询直到 observe_state 命中 state；超时/抓帧失败返回 False。"""
+        deadline = time.monotonic() + timeout
+        while ctx.running and time.monotonic() < deadline:
+            try:
+                frame = ctx.capturer.grab()
+            except Exception as exc:
+                logger.warning("等待状态 %s 时抓帧失败: %s", state.name, exc)
+                return False
+            ctx.frame = frame
+            observed = observe_state(
+                frame,
+                ctx.vision,
+                candidates=candidates,
+                store=ctx.store,
+                config=ctx.config,
+            )
+            if observed == state:
+                ctx.last_state = observed
+                return True
+            time.sleep(interval)
+        logger.warning("等待状态 %s 超时", state.name)
+        return False
 
     @staticmethod
     def _press(ctx: Context, key: str) -> bool:
@@ -281,10 +311,16 @@ class OuterLifecycle(_LifecycleBase):
         self._register_fields_filled = False
 
         def do_click_register(c: Context) -> bool:
-            # 标题页：鼠标左键点击「注册」（纯 OCR 识别）
-            return self._click_target(
-                c, Target(name="注册按钮", kind="ocr", text="注册", fuzzy=True)
-            )
+            # 标题页：点击「注册」，OCR 范围限定为下半屏（注册按钮位于屏幕下方）。
+            # 避免全屏模糊匹配误点标题页其它「注册」文字，同时大幅提速。
+            h, w = c.frame.shape[:2]
+            roi = (0, h // 2, w, h - h // 2)
+            if not self._click_target(
+                c, Target(name="注册按钮", kind="ocr", text="注册", fuzzy=True, roi=roi)
+            ):
+                return False
+            # 点击后等待注册弹窗加载完成（CHECK_IN），弹窗未就绪前不重复点击、不填表
+            return self._wait_for_state(c, GameState.CHECK_IN, candidates=(GameState.CHECK_IN,))
 
         def do_fill_form(c: Context) -> bool:
             # 注册页：填写表单 + 勾选用户协议（只填一次，避免状态未推进时重复输入）
