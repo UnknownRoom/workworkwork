@@ -134,7 +134,7 @@ class _LifecycleBase:
             report_problem(ctx.frame, ctx.vision, f"未找到目标 {target.name!r}", name="lifecycle")
             return False
         ctx.controller.click(*pos)
-        time.sleep(2)
+        time.sleep(5)
         return True
 
     # ------------------------------------------------------------------
