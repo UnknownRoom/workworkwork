@@ -114,7 +114,7 @@ class StateMachine:
         ctx.attempts["__unknown__"] = ctx.attempts.get("__unknown__", 0) + 1
         # 尝试 esc 关闭可能的弹窗，再重试
         try:
-            ctx.controller.key_press("escape")
+            ctx.controller.key_press("esc")
         except Exception:
             pass
         if ctx.attempts["__unknown__"] >= self.max_attempts:

@@ -92,11 +92,29 @@ class InputController:
     # ------------------------------------------------------------------
     # 键盘
     # ------------------------------------------------------------------
+    # vncdotool 的 KEYMAP 命名与日常叫法不一致，这里做别名归一，避免
+    # ord() 之类把多字符键名当成单字符处理的隐性崩溃（如 'escape' 实际键名是 'esc'）。
+    KEY_ALIASES = {
+        "escape": "esc",
+        "backspace": "bsp",
+        "return": "enter",
+        "insert": "ins",
+        "delete": "del",
+        "pageup": "pgup",
+        "pagedown": "pgdn",
+        "spacebar": "space",
+    }
+
+    @classmethod
+    def _normalize_key(cls, key: str) -> str:
+        lower = key.lower()
+        return cls.KEY_ALIASES.get(lower, lower)
+
     def key_press(self, key: str) -> None:
         """
-        按下并释放一个键。key 为 vncdotool 的按键名，如 'enter'、'a'、'space'、'escape'。
+        按下并释放一个键。key 为 vncdotool 的按键名，如 'enter'、'a'、'space'、'esc'。
         """
-        self._client.keyPress(key)
+        self._client.keyPress(self._normalize_key(key))
         self._jitter()
 
     def key_combo(self, keys: Sequence[str]) -> None:
@@ -104,6 +122,7 @@ class InputController:
         组合键（如 Ctrl+C）：传入 ['ctrl', 'c']。
         先依次按下，再逆序释放。
         """
+        keys = [self._normalize_key(k) for k in keys]
         self._client.keyDown(keys[0])
         self._jitter()
         for k in keys[1:]:
