@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 
 import vnc_vision
 from calibration import CalibrationStore
@@ -176,6 +177,10 @@ def main() -> int:
 
         capturer = vnc_vision.ScreenCapturer(client)
         controller = InputController(client)
+        print("正在刷新 VNC 目标屏幕...")
+
+        client.refreshScreen(incremental=False)
+        time.sleep(0.5)
 
         print("\n初始化 VisionEngine ...")
         # CALIBRATE: OCR 后端/语言/GPU 按实际环境调整
