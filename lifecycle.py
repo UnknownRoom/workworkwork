@@ -344,7 +344,7 @@ class OuterLifecycle(_LifecycleBase):
                 c, Target(name="注册按钮", kind="template", template_path="checkin.png", threshold=0.6)
             ):
                 return False
-            # 点击后等待注册页加载完成（CHECK_IN，login_access.png）
+            # 点击后等待注册页加载完成（CHECK_IN，checkin_mark*.png 两个标记都命中）
             return self._wait_for_state(c, GameState.CHECK_IN, candidates=(GameState.CHECK_IN,))
 
         def do_fill_form(c: Context) -> bool:

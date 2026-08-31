@@ -140,7 +140,7 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
         StateSignature("Kanal 4"),
         StateSignature("Kanal 5"),
     ],
-    # CHECK_IN / LOG_IN 改用模板签名（见 TEMPLATE_SIGNATURES）：login_access.png / Channel.png
+    # CHECK_IN / LOG_IN 改用模板签名（见 TEMPLATE_SIGNATURES）：checkin_mark*.png / Channel.png
     GameState.GAME_START: [
         StateSignature("点击进入游戏"),
         StateSignature("点击加入游戏"),
@@ -200,7 +200,8 @@ TEMPLATE_SIGNATURES: Dict[GameState, List[TemplateSignature]] = {
         TemplateSignature("login.png", threshold=0.6),
     ],
     GameState.CHECK_IN: [
-        TemplateSignature("login_access.png", threshold=0.6),
+        TemplateSignature("checkin_mark.png", threshold=0.8),
+        TemplateSignature("checkin_mark2.png", threshold=0.8),
     ],
     GameState.LOG_IN: [
         TemplateSignature("Channel.png", threshold=0.6),
