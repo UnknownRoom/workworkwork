@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from dataclasses import replace
 from typing import Dict, List, Optional, Tuple
 
@@ -133,6 +134,7 @@ class _LifecycleBase:
             report_problem(ctx.frame, ctx.vision, f"未找到目标 {target.name!r}", name="lifecycle")
             return False
         ctx.controller.click(*pos)
+        time.sleep(2)
         return True
 
     # ------------------------------------------------------------------
