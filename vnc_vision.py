@@ -88,12 +88,14 @@ class ScreenCapturer:
         """
         抓取一帧，直接返回内存中的 BGR NumPy 数组（不写盘）。
 
-        使用 incremental=True 请求增量更新：静止画面时服务器会立即返回「空更新」，
-        不会像全量刷新（incremental=False）那样在屏幕无变化时无限阻塞。
-        若服务器仍未及时响应（超时/断连），退回使用最后一帧画面，避免卡死。
+        必须用 incremental=False（全量刷新）：静止画面时服务器也会返回完整帧，
+        从而触发 vncdotool 的 commitUpdate → callback 本次刷新的 Deferred。
+        若用 incremental=True，静止时服务器只回「空更新（仅 LAST_RECT、0 矩形）」，
+        vncdotool 不会调用 commitUpdate，导致 refreshScreen 永远等不到响应而超时。
+        全量刷新正常约 1~2 秒完成；若仍超时/失败则退回最后画面，避免卡死。
         """
         try:
-            self._client.refreshScreen(incremental=True)
+            self._client.refreshScreen(incremental=False)
         except Exception as exc:  # 超时（TimeoutError）或其它刷新异常
             if not self._warned_stale:
                 print(f"⚠️ 刷新画面超时/失败，退回使用最后画面（仅警告一次）: {exc}")
