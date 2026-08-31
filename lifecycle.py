@@ -237,6 +237,9 @@ class OuterLifecycle(_LifecycleBase):
         if not self.change_default_language():
             logger.error("语言初始化失败，后续中文识别可能不可用，请检查 language.png")
 
+        # 诊断：打印当前画面识别到的状态与 OCR 全文，便于定位「停在启动」时屏幕在哪
+        self._log_current_state()
+
         while self.running:
             # 每个角色周期只生成一次账号；重试（register/login/create 失败后 continue）
             # 复用同一个账号，避免因状态检测失败而每轮换新用户名死循环。
@@ -302,6 +305,28 @@ class OuterLifecycle(_LifecycleBase):
             self.language_initialized = True
             logger.info("语言已切换为默认（中文）")
         return ok
+
+    # ------------------------------------------------------------------
+    # 诊断：打印当前画面状态 + OCR 全文
+    # ------------------------------------------------------------------
+    def _log_current_state(self) -> None:
+        try:
+            frame = self.capturer.grab()
+        except Exception as exc:
+            logger.error("诊断抓帧失败: %s", exc)
+            return
+        observed = observe_state(
+            frame, self.vision, store=self.store, config=self.config
+        )
+        logger.info("当前识别状态: %s", observed.name if observed else "未知")
+        if observed is None:
+            try:
+                details = self.vision.read_all(frame)
+                logger.warning("当前画面 OCR 全文（共 %d 条）:", len(details))
+                for text, conf, center in details:
+                    logger.warning("    '%s' (%.2f) @ %s", text, conf, center)
+            except Exception as exc:
+                logger.warning("诊断 OCR 失败: %s", exc)
 
     # ------------------------------------------------------------------
     # 隐藏摆摊设置（游戏记忆，全局一次）

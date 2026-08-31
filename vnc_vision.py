@@ -75,6 +75,8 @@ class ScreenCapturer:
         if screen is None:
             raise RuntimeError("VNC 连接已建立，但未收到画面帧")
 
+        self._warned_stale = False
+
         # 远端屏幕分辨率（用于坐标映射）。screen 是 PIL.Image，size=(宽, 高)
         self.width, self.height = screen.size
         self.screen_size: Tuple[int, int] = (self.width, self.height)
@@ -86,11 +88,16 @@ class ScreenCapturer:
         """
         抓取一帧，直接返回内存中的 BGR NumPy 数组（不写盘）。
 
-        vncdotool 1.x 已把 framebuffer 解码为 PIL.Image(screen, RGB 模式)，
-        这里只需转成 OpenCV 惯用的 BGR 数组，无需再手工解析原始字节。
+        使用 incremental=True 请求增量更新：静止画面时服务器会立即返回「空更新」，
+        不会像全量刷新（incremental=False）那样在屏幕无变化时无限阻塞。
+        若服务器仍未及时响应（超时/断连），退回使用最后一帧画面，避免卡死。
         """
-        # 请求一帧 framebuffer 更新（vncdotool 的 refreshScreen 返回 Deferred，非阻塞等待）
-        self._client.refreshScreen(incremental=False)
+        try:
+            self._client.refreshScreen(incremental=True)
+        except Exception as exc:  # 超时（TimeoutError）或其它刷新异常
+            if not self._warned_stale:
+                print(f"⚠️ 刷新画面超时/失败，退回使用最后画面（仅警告一次）: {exc}")
+                self._warned_stale = True
 
         screen = self._client.screen
         if screen is None:

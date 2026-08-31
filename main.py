@@ -45,7 +45,8 @@ def connect_vnc():
     print("正在连接 VNC...")
     print(f"地址: {VNC_HOST}:{VNC_PORT}")
     try:
-        client = api.connect(f"{VNC_HOST}::{VNC_PORT}", password=VNC_PASSWORD)
+        # timeout: 每次同步调用（如 refreshScreen）的最长等待秒数，避免服务器不响应时无限阻塞
+        client = api.connect(f"{VNC_HOST}::{VNC_PORT}", password=VNC_PASSWORD, timeout=10.0)
         print("✅ VNC 连接成功")
         return client
     except Exception as e:
