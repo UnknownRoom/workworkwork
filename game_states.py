@@ -90,10 +90,14 @@ class TemplateSignature:
     """状态的一个模板图特征：模板匹配（matchTemplate 分数）超过 threshold 即命中。
 
     template_path 可含 {country} 占位符，运行时按 config.country 解析为内置图片文件名。
+
+    any_of=True 时，该状态下的多个模板为「任一命中即命中」（OR 关系）；
+    默认 False 表示「全部命中才命中」（AND 关系）。
     """
     template_path: str
     threshold: float = 0.6
     roi: Optional[BBox] = None
+    any_of: bool = False
 
 
 # 国家 -> 内置战斗 UI 图片文件名（程序内置图片）。
@@ -200,8 +204,8 @@ TEMPLATE_SIGNATURES: Dict[GameState, List[TemplateSignature]] = {
         TemplateSignature("login.png", threshold=0.6),
     ],
     GameState.CHECK_IN: [
-        TemplateSignature("checkin_mark.png", threshold=0.8),
-        TemplateSignature("checkin_mark2.png", threshold=0.8),
+        TemplateSignature("checkin_mark.png", threshold=0.8, any_of=True),
+        TemplateSignature("checkin_mark2.png", threshold=0.8, any_of=True),
     ],
     GameState.LOG_IN: [
         TemplateSignature("Channel.png", threshold=0.6),
@@ -344,6 +348,9 @@ def _learn_ocr_boxes(store, sigs, ocr_results) -> None:
 
 def _observe_templates(frame, vision, tpl_sigs, store) -> Dict[GameState, bool]:
     """模板签名两阶段匹配（复用学习 bbox / 全屏学习），返回各状态是否命中。"""
+    # 每个状态是 AND（默认）还是 OR（any_of=True）语义。
+    any_of = {state: any(sig.any_of for sig in _sigs_for_state(tpl_sigs, state))
+              for state in {state for state, _ in tpl_sigs}}
     hits: Dict[GameState, bool] = {}
     for state, sig in tpl_sigs:
         path = sig.template_path
@@ -367,8 +374,15 @@ def _observe_templates(frame, vision, tpl_sigs, store) -> Dict[GameState, bool]:
                     store.save()
                     logger.info("学习模板 '%s' -> 四点=%s", path, corners)
 
-        hits[state] = hits.get(state, True) and hit
+        if any_of.get(state, False):
+            hits[state] = hits.get(state, False) or hit
+        else:
+            hits[state] = hits.get(state, True) and hit
     return hits
+
+
+def _sigs_for_state(tpl_sigs, state) -> List[TemplateSignature]:
+    return [sig for s, sig in tpl_sigs if s == state]
 
 
 def _detect_state(

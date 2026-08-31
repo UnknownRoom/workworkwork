@@ -338,31 +338,34 @@ class OuterLifecycle(_LifecycleBase):
         self._register_form_done = False
         self._register_fields_filled = False
 
-        def do_click_register(c: Context) -> bool:
+        def do_register(c: Context) -> bool:
             # 标题页：点击「注册」按钮（模板 checkin.png）
             if not self._click_target(
                 c, Target(name="注册按钮", kind="template", template_path="checkin.png", threshold=0.6)
             ):
                 return False
-            # 点击后等待注册页加载完成（CHECK_IN，checkin_mark*.png 两个标记都命中）
-            return self._wait_for_state(c, GameState.CHECK_IN, candidates=(GameState.CHECK_IN,))
-
-        def do_fill_form(c: Context) -> bool:
-            # 注册页：填写表单 + 勾选用户协议（只填一次，避免状态未推进时重复输入）
-            if self._register_form_done:
-                return True
-            if self._fill_register_form(c):
-                self._register_form_done = True
-                return True
+            # 点击后默认进入 CHECK_IN（注册页），不再依赖 checkin_mark 状态识别
+            # （实机该标记常识别不到）；改为轮询抓帧直接尝试填表，直到成功或超时。
+            logger.info("已点击注册按钮，默认进入 CHECK_IN 注册页")
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                time.sleep(0.5)
+                try:
+                    frame = c.capturer.grab()
+                except Exception as exc:
+                    logger.warning("注册页抓帧失败: %s", exc)
+                    continue
+                c.frame = frame
+                # _fill_register_form 内部有幂等保护，重复尝试不会污染已填字段
+                if self._fill_register_form(c):
+                    self._register_form_done = True
+                    return True
             return False
 
         fsm = StateMachine(
             {
                 GameState.TITLE: [
-                    Transition(GameState.CHECK_IN, action=do_click_register),
-                ],
-                GameState.CHECK_IN: [
-                    Transition(GameState.LOG_IN, action=do_fill_form),
+                    Transition(GameState.LOG_IN, action=do_register),
                 ],
             },
             name="register",
