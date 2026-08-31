@@ -118,3 +118,16 @@ class InputController:
         for ch in text:
             self._client.keyPress(ch)
             self._jitter()
+
+    def paste_text(self, text: str) -> None:
+        """通过 VNC 剪贴板粘贴文本，绕过远端输入法（IME）吞键问题。
+
+        先写入远端剪贴板（clientCutText，仅支持 Latin-1，账号字段均为 ASCII），
+        再 Ctrl+A 全选清空已填内容，最后 Ctrl+V 粘贴。
+        """
+        self._client.clientCutText(text)
+        self._jitter()
+        self.key_combo(["ctrl", "a"])
+        self._jitter()
+        self.key_combo(["ctrl", "v"])
+        self._jitter()

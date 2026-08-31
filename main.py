@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import logging
 import sys
-import time
 
 import vnc_vision
 from calibration import CalibrationStore
@@ -175,19 +174,17 @@ def main() -> int:
         if not screen_ok:
             print("⚠️ 当前环境暂不符合预期，仍继续尝试运行...")
 
+        # 先让用户回答定制目标，再加载慢的 OCR 模型，避免交互前长时间无输出
+        config = build_config()
+
         capturer = vnc_vision.ScreenCapturer(client)
         controller = InputController(client)
-        print("正在刷新 VNC 目标屏幕...")
-
-        client.refreshScreen(incremental=False)
-        time.sleep(0.5)
 
         print("\n初始化 VisionEngine ...")
+        print("正在加载 OCR 模型，PaddleOCR 首次运行会下载模型，可能需要数分钟，请耐心等待...")
         # CALIBRATE: OCR 后端/语言/GPU 按实际环境调整
         vision = vnc_vision.VisionEngine(ocr_backend="paddleocr", languages=["ch"], gpu=False)
         print("✅ VisionEngine 初始化成功")
-
-        config = build_config()
 
         store = CalibrationStore(path="calibration.json")
 

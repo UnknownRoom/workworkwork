@@ -121,10 +121,7 @@ def resolve_template_path(path: str, config) -> str:
 #   - roi 全部先置 None（回退全屏 OCR）；实机确认各文本位置后填具体区域以提速。
 #   - 判定用「全部签名命中」的精确匹配（strip + 忽略大小写）。
 STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
-    GameState.TITLE: [
-        StateSignature("注册"),
-        StateSignature("登录"),
-    ],
+    # TITLE 改用模板签名（checkin.png/login.png，见 TEMPLATE_SIGNATURES）
     GameState.LOADING: [
         StateSignature("正在连接服务器"),
         StateSignature("取消"),
@@ -143,17 +140,7 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
         StateSignature("Kanal 4"),
         StateSignature("Kanal 5"),
     ],
-    GameState.LOG_IN: [
-        StateSignature("用户名"),
-        StateSignature("请输入你的账号"),
-        StateSignature("密码"),
-        StateSignature("请输入你的密码"),
-        StateSignature("登录"),
-    ],
-    GameState.CHECK_IN: [
-        StateSignature("密码要求"),
-        StateSignature("消息注册"),
-    ],
+    # CHECK_IN / LOG_IN 改用模板签名（见 TEMPLATE_SIGNATURES）：login_access.png / Channel.png
     GameState.GAME_START: [
         StateSignature("点击进入游戏"),
         StateSignature("点击加入游戏"),
@@ -208,6 +195,16 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
 # 模板签名表（通用模板机制，战斗 UI 为首批数据）
 # ===========================================================================
 TEMPLATE_SIGNATURES: Dict[GameState, List[TemplateSignature]] = {
+    GameState.TITLE: [
+        TemplateSignature("checkin.png", threshold=0.6),
+        TemplateSignature("login.png", threshold=0.6),
+    ],
+    GameState.CHECK_IN: [
+        TemplateSignature("login_access.png", threshold=0.6),
+    ],
+    GameState.LOG_IN: [
+        TemplateSignature("Channel.png", threshold=0.6),
+    ],
     GameState.FIGHTING: [
         TemplateSignature("{country}_fight.png", threshold=0.6),
     ],

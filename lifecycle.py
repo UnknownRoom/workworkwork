@@ -35,6 +35,9 @@ from targets import Target, find_target
 
 logger = logging.getLogger(__name__)
 
+# 外层生命周期连续失败上限（超过则终止，避免无限重试死循环）
+MAX_CONSECUTIVE_FAILURES = 3
+
 
 # ===========================================================================
 # 占位坐标（CALIBRATE: 按实机 1920x1080 校准）
@@ -182,6 +185,18 @@ class _LifecycleBase:
                 return True
             time.sleep(interval)
         logger.warning("等待状态 %s 超时", state.name)
+        # 诊断：打印超时瞬间的画面 OCR 全文，便于校准签名/模板
+        try:
+            if ctx.frame is not None:
+                details = ctx.vision.read_all(ctx.frame)
+                logger.warning(
+                    "等待状态 %s 超时，当前画面识别结果（共 %d 条）:",
+                    state.name, len(details),
+                )
+                for text, conf, center in details:
+                    logger.warning("    '%s' (%.2f) @ %s", text, conf, center)
+        except Exception as exc:
+            logger.warning("等待状态 %s 超时后打印画面失败: %s", state.name, exc)
         return False
 
     @staticmethod
@@ -211,9 +226,7 @@ class OuterLifecycle(_LifecycleBase):
         self._register_form_done = False
         self._register_fields_filled = False
         self._login_form_done = False
-        self._triarch_pool: List[str] = []
-        self._triarch_index: int = 0
-        self._current_triarch: str = ""
+        self._consecutive_failures = 0
 
     # ------------------------------------------------------------------
     # 全局一次性设置（游戏记忆，整个生命周期只执行一次）
@@ -230,12 +243,27 @@ class OuterLifecycle(_LifecycleBase):
             if not self.account["username"]:
                 self._generate_account()
             logger.info("开始第 %d 次角色创建", self.create_count + 1)
+
+            failed_step = None
             if not self.register():
+                failed_step = "register"
+            elif not self.login():
+                failed_step = "login"
+            elif not self.create_character():
+                failed_step = "create_character"
+
+            if failed_step is not None:
+                self._consecutive_failures += 1
+                logger.error(
+                    "第 %d 次连续失败（步骤=%s）",
+                    self._consecutive_failures, failed_step,
+                )
+                if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    logger.error("连续失败 %d 次，终止外层循环", self._consecutive_failures)
+                    self.running = False
                 continue
-            if not self.login():
-                continue
-            if not self.create_character():
-                continue
+
+            self._consecutive_failures = 0
             self.enter_game()
             self.create_count += 1
             # CALIBRATE: 目前不识别「用户名已存在」提示，成功后清空账号让下一角色生成新号。
@@ -311,15 +339,12 @@ class OuterLifecycle(_LifecycleBase):
         self._register_fields_filled = False
 
         def do_click_register(c: Context) -> bool:
-            # 标题页：点击「注册」，OCR 范围限定为下半屏（注册按钮位于屏幕下方）。
-            # 避免全屏模糊匹配误点标题页其它「注册」文字，同时大幅提速。
-            h, w = c.frame.shape[:2]
-            roi = (0, h // 2, w, h - h // 2)
+            # 标题页：点击「注册」按钮（模板 checkin.png）
             if not self._click_target(
-                c, Target(name="注册按钮", kind="ocr", text="注册", fuzzy=True, roi=roi)
+                c, Target(name="注册按钮", kind="template", template_path="checkin.png", threshold=0.6)
             ):
                 return False
-            # 点击后等待注册弹窗加载完成（CHECK_IN），弹窗未就绪前不重复点击、不填表
+            # 点击后等待注册页加载完成（CHECK_IN，login_access.png）
             return self._wait_for_state(c, GameState.CHECK_IN, candidates=(GameState.CHECK_IN,))
 
         def do_fill_form(c: Context) -> bool:
@@ -353,31 +378,37 @@ class OuterLifecycle(_LifecycleBase):
     def _fill_register_form(self, c: Context) -> bool:
         # 表单字段只填一次；协议勾选失败重试时不再重复输入，避免污染已填内容。
         if not self._register_fields_filled:
-            # 1) 点击用户名输入框，输入随机用户名
+            # 1) 点击用户名输入框（模板 username.png），粘贴用户名
             if not self._click_target(
-                c, Target(name="用户名输入框", kind="ocr", text="用户名", fuzzy=True)
+                c, Target(name="用户名输入框", kind="template", template_path="username.png", threshold=0.6)
             ):
                 return False
-            self.controller.type_text(self.account["username"])
+            self.controller.paste_text(self.account["username"])
 
             # 2) tab -> 密码
             self.controller.key_press("tab")
-            self.controller.type_text(self.account["password"])
+            self.controller.paste_text(self.account["password"])
 
             # 3) tab -> 确认密码（默认密码连续输入两次）
             self.controller.key_press("tab")
-            self.controller.type_text(self.account["password"])
+            self.controller.paste_text(self.account["password"])
 
             # 4) tab -> 固定邮箱
             self.controller.key_press("tab")
-            self.controller.type_text(self.account["email"])
+            self.controller.paste_text(self.account["email"])
 
             # 5) end 键
             self.controller.key_press("end")
             self._register_fields_filled = True
 
-        # 6) 根据 login.png 定位并勾选两个用户协议
-        return self._agree_to_terms(c)
+        # 6) 根据 box.png 定位并勾选两个用户协议
+        if not self._agree_to_terms(c):
+            return False
+
+        # 7) 点击注册提交按钮（login_access.png，仅在 CHECK_IN 阶段存在）
+        return self._click_target(
+            c, Target(name="注册提交", kind="template", template_path="login_access.png", threshold=0.6)
+        )
 
     def _agree_to_terms(self, c: Context) -> bool:
         # box.png 为纯「同意用户协议」勾选框模板（未勾选态，15x19）；
@@ -400,83 +431,124 @@ class OuterLifecycle(_LifecycleBase):
         return True
 
     # ------------------------------------------------------------------
-    # 登录： LOG_IN -> CHANNEL_SELECT -> GAME_START
+    # 登录： LOG_IN ->（选频道）-> 填账号密码 -> alarm_window -> CREATE_ROLE
     # ------------------------------------------------------------------
-    def _next_triarch_option(self) -> str:
-        """五个 Triarch 选项（Triarch 1~Triarch 5）洗牌后依次取用（不重复），取完重新洗牌循环。"""
-        if self._triarch_index >= len(self._triarch_pool):
-            self._triarch_pool = [f"Triarch {i}" for i in range(1, 6)]
-            random.shuffle(self._triarch_pool)
-            self._triarch_index = 0
-            logger.info("Triarch 选项池重新洗牌: %s", self._triarch_pool)
-        opt = self._triarch_pool[self._triarch_index]
-        self._triarch_index += 1
-        logger.info("选择 Triarch 选项: %s（第 %d/5）", opt, self._triarch_index)
-        return opt
+    def _select_channel(self, c: Context) -> bool:
+        # 若不在频道选择页，先点击 Channel.png 进入；再点一个 Kanal 回到登录页。
+        observed = observe_state(
+            c.frame, c.vision,
+            candidates=(GameState.CHANNEL_SELECT,),
+            store=c.store, config=c.config,
+        )
+        if observed != GameState.CHANNEL_SELECT:
+            if not self._click_target(
+                c, Target(name="频道选择", kind="template", template_path="Channel.png", threshold=0.6)
+            ):
+                return False
+            if not self._wait_for_state(c, GameState.CHANNEL_SELECT, candidates=(GameState.CHANNEL_SELECT,)):
+                return False
+        channel = random.choice([f"Kanal {i}" for i in range(1, 6)])
+        logger.info("随机选择频道: %s", channel)
+        if not self._click_target(c, Target(name="目标频道", kind="ocr", text=channel, fuzzy=True)):
+            return False
+        return self._wait_for_state(c, GameState.LOG_IN, candidates=(GameState.LOG_IN,))
+
+    def _wait_login_result(self, c: Context, alarm_timeout: float = 30.0, total_timeout: float = 120.0) -> bool:
+        """登录提交后等待进入 CREATE_ROLE。
+
+        alarm_window.png 持续 alarm_timeout 无变化时，向用户反馈并询问是否重试，
+        避免无限等待（用户选择不重试则终止）。
+        """
+        deadline = time.monotonic() + total_timeout
+        alarm_since = None
+        while c.running and self.running and time.monotonic() < deadline:
+            try:
+                frame = c.capturer.grab()
+            except Exception as exc:
+                logger.warning("等待登录结果抓帧失败: %s", exc)
+                return False
+            c.frame = frame
+            observed = observe_state(
+                frame, c.vision,
+                candidates=(GameState.CREATE_ROLE,),
+                store=c.store, config=c.config,
+            )
+            if observed == GameState.CREATE_ROLE:
+                c.last_state = observed
+                return True
+
+            hit, _, _ = c.vision.find_template_bbox(frame, "alarm_window.png", threshold=0.6)
+            now = time.monotonic()
+            if hit:
+                if alarm_since is None:
+                    alarm_since = now
+                elif now - alarm_since >= alarm_timeout:
+                    report_problem(frame, c.vision, "登录卡在 alarm_window 无变化", name="login")
+                    try:
+                        ans = input("程序出现问题：登录长时间无响应。是否重试？(y/n，默认 n): ").strip().lower()
+                    except EOFError:
+                        ans = "n"
+                    if ans in ("y", "yes"):
+                        logger.info("用户选择重试，继续等待登录")
+                        alarm_since = now
+                        continue
+                    logger.info("用户选择不重试，终止")
+                    self.running = False
+                    c.running = False
+                    return False
+            else:
+                alarm_since = None
+            time.sleep(0.5)
+        logger.warning("等待登录结果超时")
+        return False
 
     def login(self) -> bool:
         ctx = self._ctx()
+        self._login_channel_selected = False
         self._login_form_done = False
-        self._current_triarch = self._next_triarch_option()
 
-        def do_click_triarch(c: Context) -> bool:
-            # 启动器：单击本轮选中的 Triarch 选项进入登录页
-            return self._click_target(
-                c, Target(name="Triarch 启动器", kind="ocr", text=self._current_triarch, fuzzy=True)
-            )
-
-        def do_submit(c: Context) -> bool:
+        def do_login(c: Context) -> bool:
             if self._login_form_done:
                 return True
-            # 1) 识别「请输入你的账号」输入框 -> 定位 -> 单击
+            # 1) 先选频道（一次）
+            if not self._login_channel_selected:
+                if not self._select_channel(c):
+                    return False
+                self._login_channel_selected = True
+                return True
+            # 2) 填账号密码并提交
             if not self._click_target(
-                c, Target(name="账号输入框", kind="ocr", text="请输入你的账号")
+                c, Target(name="账号输入框", kind="template", template_path="account.png", threshold=0.6)
             ):
                 return False
-            # 2) 输入用户名
-            self.controller.type_text(self.account["username"])
-            # 3) tab -> 密码框
+            self.controller.paste_text(self.account["username"])
             self.controller.key_press("tab")
-            # 4) 输入默认密码
-            self.controller.type_text(self.account["password"])
-            # 5) enter 提交
+            self.controller.paste_text(self.account["password"])
             self.controller.key_press("enter")
+            # 3) 等待登录结果（alarm_window -> CREATE_ROLE）
+            if not self._wait_login_result(c):
+                return False
             self._login_form_done = True
             return True
-
-        def do_select_channel(c: Context) -> bool:
-            # 五个频道随机选一个
-            channel = random.choice([f"Kanal {i}" for i in range(1, 6)])
-            logger.info("随机选择频道: %s", channel)
-            return self._click_target(
-                c,
-                Target(name="目标频道", kind="ocr", text=channel, fuzzy=True),
-            )
 
         fsm = StateMachine(
             {
                 GameState.LOG_IN: [
-                    Transition(GameState.CHANNEL_SELECT, action=do_submit),
-                ],
-                GameState.CHANNEL_SELECT: [
-                    Transition(GameState.GAME_START, action=do_select_channel),
+                    Transition(GameState.CREATE_ROLE, action=do_login),
                 ],
             },
             name="login",
             timeout=self.config.timeout,
             max_attempts=self.config.max_attempts,
         )
-        fsm.run(ctx, stop_state=GameState.GAME_START)
-        return ctx.last_state == GameState.GAME_START
+        fsm.run(ctx, stop_state=GameState.CREATE_ROLE)
+        return ctx.last_state == GameState.CREATE_ROLE
 
     # ------------------------------------------------------------------
-    # 创建角色：GAME_START -> CREATE_ROLE -> COUNTRY_SELECT -> LOADING -> MENU
+    # 创建角色：CREATE_ROLE -> COUNTRY_SELECT -> LOADING -> MENU
     # ------------------------------------------------------------------
     def create_character(self) -> bool:
         ctx = self._ctx()
-
-        def do_enter(c: Context) -> bool:
-            return self._click_target(c, Target(name="点击进入游戏", kind="fixed", point=POS_ENTER_GAME))
 
         def do_select_class(c: Context) -> bool:
             # CALIBRATE: 创建角色页选战士（OCR 识别名「战士」），进入国家选择页。
@@ -489,9 +561,6 @@ class OuterLifecycle(_LifecycleBase):
 
         fsm = StateMachine(
             {
-                GameState.GAME_START: [
-                    Transition(GameState.CREATE_ROLE, action=do_enter),
-                ],
                 GameState.CREATE_ROLE: [
                     Transition(GameState.COUNTRY_SELECT, action=do_select_class),
                 ],
@@ -574,7 +643,11 @@ class GameLifecycle(_LifecycleBase):
             return False
         ctx.frame = frame
 
-        for sigs in TEMPLATE_SIGNATURES.values():
+        for state, sigs in TEMPLATE_SIGNATURES.items():
+            # 只初始化游戏内模板；跳过游戏外状态（TITLE/CHECK_IN/LOG_IN 的模板
+            # 只在标题/注册/登录页出现，游戏内不存在，会误判为失败）。
+            if state in (GameState.TITLE, GameState.CHECK_IN, GameState.LOG_IN):
+                continue
             for sig in sigs:
                 path = resolve_template_path(sig.template_path, self.config)
                 key = self.store.template_key(path)

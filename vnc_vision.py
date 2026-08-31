@@ -89,7 +89,7 @@ class ScreenCapturer:
         vncdotool 1.x 已把 framebuffer 解码为 PIL.Image(screen, RGB 模式)，
         这里只需转成 OpenCV 惯用的 BGR 数组，无需再手工解析原始字节。
         """
-        # 全量刷新：阻塞至本次 framebuffer 更新提交完成
+        # 请求一帧 framebuffer 更新（vncdotool 的 refreshScreen 返回 Deferred，非阻塞等待）
         self._client.refreshScreen(incremental=False)
 
         screen = self._client.screen
@@ -142,6 +142,7 @@ class VisionEngine:
             except ImportError as exc:  # pragma: no cover
                 raise RuntimeError("缺少 easyocr，请先执行: pip install easyocr") from exc
             lang = self.languages if self.languages else ["ch_sim", "en"]
+            print(f"正在加载 EasyOCR 模型（语言={lang}），首次运行可能需要下载模型...")
             self._ocr = easyocr.Reader(lang, gpu=gpu, **kwargs)
 
         elif self.ocr_backend == self.BACKEND_PADDLE:
@@ -152,6 +153,7 @@ class VisionEngine:
 
             # 3.x 默认参数：关闭与文字识别无关的版面/方向分类，加速
             lang = self.languages if self.languages else ["ch"]
+            print(f"正在加载 PaddleOCR 模型（语言={lang}），首次运行可能需要下载模型...")
             self._ocr = PaddleOCR(
                 lang="".join(lang),
                 use_doc_orientation_classify=False,
