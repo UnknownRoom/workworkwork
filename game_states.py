@@ -100,12 +100,11 @@ class TemplateSignature:
     any_of: bool = False
 
 
-# 国家 -> 内置战斗 UI 图片文件名（程序内置图片）。
-# {country} 占位符解析为国家关键字（red/blue/yellow），拼出如 red_fight.png。
-COUNTRY_TEMPLATES: Dict[Country, str] = {
-    Country.RED: "red_fight.png",
-    Country.BLUE: "blue_fight.png",
-    Country.YELLOW: "yellow_fight.png",
+# 国家 -> 国家关键字（用于 {country} 占位符解析，如 red/blue/yellow）。
+COUNTRY_KEYWORD: Dict[Country, str] = {
+    Country.RED: "red",
+    Country.BLUE: "blue",
+    Country.YELLOW: "yellow",
 }
 
 
@@ -113,7 +112,7 @@ def resolve_template_path(path: str, config) -> str:
     """把模板路径里的 {country} 占位符替换为国家关键字（如 red）。"""
     if config is None or "{country}" not in path:
         return path
-    keyword = COUNTRY_TEMPLATES[config.country].split("_")[0]
+    keyword = COUNTRY_KEYWORD[config.country]
     return path.replace("{country}", keyword)
 
 
@@ -211,9 +210,13 @@ TEMPLATE_SIGNATURES: Dict[GameState, List[TemplateSignature]] = {
         TemplateSignature("Channel.png", threshold=0.6),
     ],
     GameState.FIGHTING: [
-        TemplateSignature("{country}_fight.png", threshold=0.6),
+        TemplateSignature("fight_position_model/{country}_fight.png", threshold=0.6),
     ],
 }
+
+# 仅游戏内才识别的模板状态（战斗 UI 等）。游戏外（标题/注册/登录/创建角色）阶段
+# observe_state 不得触碰这些模板，否则会因模板路径/内容不匹配而影响游戏外流程。
+IN_GAME_TEMPLATE_STATES = {GameState.FIGHTING}
 
 
 # ===========================================================================
@@ -301,14 +304,24 @@ def _collect_template_signatures(
     config,
 ) -> List[Tuple[GameState, TemplateSignature]]:
     """收集模板签名并解析国家占位符；无法解析（config 缺失）的签名跳过。"""
-    states = candidates if candidates is not None else list(TEMPLATE_SIGNATURES.keys())
+    if candidates is not None:
+        states = list(candidates)
+    else:
+        # 未指定候选状态（如启动诊断）时，排除「仅游戏内」的模板状态，
+        # 避免游戏外流程触碰战斗 UI 等模板导致误判或模板缺失报错。
+        states = [s for s in TEMPLATE_SIGNATURES.keys() if s not in IN_GAME_TEMPLATE_STATES]
     out: List[Tuple[GameState, TemplateSignature]] = []
     for state in states:
         for sig in TEMPLATE_SIGNATURES.get(state, []):
             path = resolve_template_path(sig.template_path, config)
             if "{country}" in path:
                 continue
-            out.append((state, TemplateSignature(template_path=path, threshold=sig.threshold, roi=sig.roi)))
+            out.append((state, TemplateSignature(
+                template_path=path,
+                threshold=sig.threshold,
+                roi=sig.roi,
+                any_of=sig.any_of,
+            )))
     return out
 
 
