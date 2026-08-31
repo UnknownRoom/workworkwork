@@ -95,7 +95,7 @@ class ScreenCapturer:
         全量刷新正常约 1~2 秒完成；若仍超时/失败则退回最后画面，避免卡死。
         """
         try:
-            self._client.refreshScreen(incremental=False)
+            self._client.refreshScreen(incremental=True)  # 仅触发刷新，实际画面仍在 framebuffer 中
         except Exception as exc:  # 超时（TimeoutError）或其它刷新异常
             if not self._warned_stale:
                 print(f"⚠️ 刷新画面超时/失败，退回使用最后画面（仅警告一次）: {exc}")
