@@ -52,8 +52,8 @@ POS_LOGIN = (0, 0)             # 登录按钮
 POS_USERNAME_FIELD = (0, 0)    # 用户名输入框
 POS_PASSWORD_FIELD = (0, 0)    # 密码输入框
 POS_REGISTER = (0, 0)          # 注册提交按钮
-POS_TERMS_BOX_1 = (0, 0)       # 用户协议勾选框 1
-POS_TERMS_BOX_2 = (0, 0)       # 用户协议勾选框 2
+POS_TERMS_BOX_1 = (786, 513)       # 用户协议勾选框 1
+POS_TERMS_BOX_2 = (787, 536)       # 用户协议勾选框 2
 
 # 国家选择页国旗模板（CALIBRATE: 对应 flag_*.png，用于识别并点击所选国家）
 FLAG_TEMPLATES: Dict[Country, str] = {
@@ -434,8 +434,7 @@ class OuterLifecycle(_LifecycleBase):
         # 两个用户协议勾选框，直接点击固定坐标（CALIBRATE: 实机确认勾选框坐标）。
         for x, y in (POS_TERMS_BOX_1, POS_TERMS_BOX_2):
             logger.info("勾选用户协议 @ (%d, %d)", x, y)
-            self.controller.click(786,513)
-            self.controller.click(787,536)
+            self.controller.click(x,y)
         return True
 
     def _submit_and_verify(self, c: Context) -> bool:
