@@ -451,6 +451,12 @@ class VisionEngine:
         template = cv2.imread(template_path, cv2.IMREAD_COLOR)
         if template is None:
             raise FileNotFoundError(f"无法读取模板图片: {template_path}")
+        print(
+        f"[Template DEBUG] "
+        f"image={image.shape[1]}x{image.shape[0]}, "
+        f"template={template.shape[1]}x{template.shape[0]}, "
+        f"offset={offset}"
+    )
 
         res = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
