@@ -354,7 +354,7 @@ class OuterLifecycle(_LifecycleBase):
             return False
 
         # 3) 提交并等待进入登录页
-        
+        return self._submit_and_verify(self._ctx())
 
     # ------------------------------------------------------------------
     # 注册页表单填写（Tab 切换字段）
