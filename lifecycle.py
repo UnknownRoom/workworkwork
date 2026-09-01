@@ -285,7 +285,7 @@ class OuterLifecycle(_LifecycleBase):
     # ------------------------------------------------------------------
     def change_default_language(self) -> bool:
         """切换默认语言为中文（游戏记忆，整个生命周期只执行一次）。"""
-        controller.click(1170,1053)
+        self.controller.click(1170,1053)
         logger.info("语言已切换为默认（中文）")
     
 
