@@ -297,7 +297,7 @@ class OuterLifecycle(_LifecycleBase):
                 name="语言按钮",
                 kind="template",
                 template_path="language.png",
-                threshold=0.6,
+                threshold=0.8,
             ),
         )
         if ok:
