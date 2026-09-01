@@ -33,7 +33,7 @@ from fsm import Context, RuntimeConfig, StateMachine, Transition
 from game_states import Country, GameState, TEMPLATE_SIGNATURES, observe_state, resolve_template_path
 from targets import Target, find_target
 from input_controller import InputController
-
+controller = InputController
 
 logger = logging.getLogger(__name__)
 
