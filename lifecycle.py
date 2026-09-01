@@ -368,7 +368,7 @@ class OuterLifecycle(_LifecycleBase):
 
         # 1) TITLE -> 点击注册按钮进入注册页（固定坐标）
         self.controller.click(956, 912)  # CALIBRATE: 注册按钮坐标（实机确认）
-        time.sleep(2.0)  # CALIBRATE: 等待注册页加载
+        time.sleep(4.0)  # CALIBRATE: 等待注册页加载
 
         # 2) 填写注册表单并勾选用户协议
         if not self._fill_register_form(self._ctx()):
