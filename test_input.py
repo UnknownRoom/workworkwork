@@ -1,5 +1,5 @@
 # test_input.py
-
+print("===== RUNNING NEW TEST_INPUT.PY =====")
 from vncdotool import api
 from input_controller import InputController
 
