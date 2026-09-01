@@ -52,8 +52,8 @@ POS_LOGIN = (0, 0)             # 登录按钮
 POS_USERNAME_FIELD = (0, 0)    # 用户名输入框
 POS_PASSWORD_FIELD = (0, 0)    # 密码输入框
 POS_REGISTER = (0, 0)          # 注册提交按钮
-POS_TERMS_BOX_1 = (786, 513)       # 用户协议勾选框 1
-POS_TERMS_BOX_2 = (787, 536)       # 用户协议勾选框 2
+POS_TERMS_BOX_1 = (783, 589)       # 用户协议勾选框 1
+POS_TERMS_BOX_2 = (787, 620)       # 用户协议勾选框 2
 
 # 国家选择页国旗模板（CALIBRATE: 对应 flag_*.png，用于识别并点击所选国家）
 FLAG_TEMPLATES: Dict[Country, str] = {
@@ -367,7 +367,7 @@ class OuterLifecycle(_LifecycleBase):
         self._register_fields_filled = False
 
         # 1) TITLE -> 点击注册按钮进入注册页（固定坐标）
-        self.controller.click(955, 792)  # CALIBRATE: 注册按钮坐标（实机确认）
+        self.controller.click(956, 912)  # CALIBRATE: 注册按钮坐标（实机确认）
         time.sleep(2.0)  # CALIBRATE: 等待注册页加载
 
         # 2) 填写注册表单并勾选用户协议
@@ -384,7 +384,7 @@ class OuterLifecycle(_LifecycleBase):
         # 表单字段只填一次；协议勾选失败重试时不再重复输入，避免污染已填内容。
         if not self._register_fields_filled:
             # 1) 点击用户名输入框并粘贴用户名
-            self.controller.click(843, 472)  # CALIBRATE: 用户名输入框坐标（实机确认）
+            self.controller.click(838,544)  # CALIBRATE: 用户名输入框坐标（实机确认）
             self.controller.paste_text(self.account["username"])
 
             # 2) tab -> 密码
