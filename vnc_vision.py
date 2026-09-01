@@ -456,6 +456,7 @@ class VisionEngine:
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
         if max_val < threshold:
             print(f"[Template] max_val={max_val:.4f}, location={max_loc}")
+            return (False, None, float(max_val))
 
         th, tw = template.shape[:2]
         x = int(max_loc[0]) + offset[0]

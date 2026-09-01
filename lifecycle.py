@@ -369,7 +369,7 @@ class OuterLifecycle(_LifecycleBase):
                 return True
             if not self._click_target(
                 c, Target(name="注册按钮", kind="template",
-                          template_path="checkin.png", threshold=0.6,roi=(1919,278,442,72))
+                          template_path="checkin.png", threshold=0.6,roi=(732,753,450,75))
             ):
                 return False
             self._register_clicked = True
@@ -405,7 +405,7 @@ class OuterLifecycle(_LifecycleBase):
         if not self._register_fields_filled:
             # 1) 点击用户名输入框（模板 username.png），粘贴用户名
             if not self._click_target(
-                c, Target(name="用户名输入框", kind="template", template_path="username.png", threshold=0.8,roi=(500,300,920,480))
+                c, Target(name="用户名输入框", kind="template", template_path="username.png", threshold=0.8,roi=(779,465,920,480))
             ):
                 return False
             self.controller.paste_text(self.account["username"])
