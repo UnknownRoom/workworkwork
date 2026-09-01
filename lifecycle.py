@@ -52,6 +52,8 @@ POS_LOGIN = (0, 0)             # 登录按钮
 POS_USERNAME_FIELD = (0, 0)    # 用户名输入框
 POS_PASSWORD_FIELD = (0, 0)    # 密码输入框
 POS_REGISTER = (0, 0)          # 注册提交按钮
+POS_TERMS_BOX_1 = (0, 0)       # 用户协议勾选框 1
+POS_TERMS_BOX_2 = (0, 0)       # 用户协议勾选框 2
 
 # 国家选择页国旗模板（CALIBRATE: 对应 flag_*.png，用于识别并点击所选国家）
 FLAG_TEMPLATES: Dict[Country, str] = {
@@ -368,16 +370,8 @@ class OuterLifecycle(_LifecycleBase):
         def click_register(c: Context) -> bool:
             # TITLE -> 点击注册按钮进入注册页 CHECK_IN（一次性，避免页面加载期间重复点击）
             if self._register_clicked:
-                controller.click(955,792)  # CALIBRATE: 注册按钮坐标（实机确认）
                 return True
-            if not self._click_target(
-                c, Target(name="注册按钮", 
-                          kind="template",
-                          template_path="checkin.png", 
-                          threshold=0.6,
-                          roi=(732,753,500,100))
-            ):
-                return False
+            self.controller.click(955, 792)  # CALIBRATE: 注册按钮坐标（实机确认）
             self._register_clicked = True
             return True
 
@@ -409,12 +403,8 @@ class OuterLifecycle(_LifecycleBase):
     def _fill_register_form(self, c: Context) -> bool:
         # 表单字段只填一次；协议勾选失败重试时不再重复输入，避免污染已填内容。
         if not self._register_fields_filled:
-            # 1) 点击用户名输入框（模板 username.png），粘贴用户名
-            if self._click_target:
-                controller.click(843,472)  # CALIBRATE: 用户名输入框坐标（实机确认）
-
-                if not self._click_target(
-                ):return False
+            # 1) 点击用户名输入框并粘贴用户名
+            self.controller.click(843, 472)  # CALIBRATE: 用户名输入框坐标（实机确认）
             self.controller.paste_text(self.account["username"])
 
             # 2) tab -> 密码
@@ -433,7 +423,7 @@ class OuterLifecycle(_LifecycleBase):
             self.controller.key_press("end")
             self._register_fields_filled = True
 
-        # 6) 根据 box.png 定位并勾选两个用户协议
+        # 6) 勾选两个用户协议
         if not self._agree_to_terms(c):
             return False
 
@@ -441,36 +431,11 @@ class OuterLifecycle(_LifecycleBase):
         return True
 
     def _agree_to_terms(self, c: Context) -> bool:
-        # box.png 为纯「同意用户协议」勾选框模板（未勾选态）；两个协议各一个勾选框。
-        # 用新鲜帧（避免填表前的旧帧），并按分数降序 + NMS 去重后取前 2 个真实勾选框。
-        try:
-            frame = c.capturer.grab()
-        except Exception as exc:
-            logger.warning("勾选协议抓帧失败: %s", exc)
-            return False
-        c.frame = frame
-
-        matches = c.vision.find_template_all(frame, "box.png", threshold=0.6)
-        if not matches:
-            report_problem(frame, c.vision, "未找到用户协议勾选框 (box.png)", name="register")
-            return False
-
-        matches.sort(key=lambda m: m[1], reverse=True)
-        kept: List[Tuple[Tuple[int, int], float]] = []
-        for corners, score in matches:
-            cx = sum(p[0] for p in corners) // len(corners)
-            cy = sum(p[1] for p in corners) // len(corners)
-            if any(abs(cx - kx) < 8 and abs(cy - ky) < 8 for (kx, ky), _ in kept):
-                continue
-            kept.append(((cx, cy), score))
-            if len(kept) >= 2:
-                break
-
-        if len(kept) < 2:
-            logger.warning("只找到 %d 个勾选框，需确认第二个协议位置（CALIBRATE）", len(kept))
-        for (cx, cy), score in kept:
-            logger.info("勾选用户协议 @ (%d, %d), score=%.3f", cx, cy, score)
-            c.controller.click(cx, cy)
+        # 两个用户协议勾选框，直接点击固定坐标（CALIBRATE: 实机确认勾选框坐标）。
+        for x, y in (POS_TERMS_BOX_1, POS_TERMS_BOX_2):
+            logger.info("勾选用户协议 @ (%d, %d)", x, y)
+            self.controller.click(786,513)
+            self.controller.click(787,536)
         return True
 
     def _submit_and_verify(self, c: Context) -> bool:
