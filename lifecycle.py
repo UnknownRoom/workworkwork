@@ -363,39 +363,19 @@ class OuterLifecycle(_LifecycleBase):
         )
 
     def register(self) -> bool:
-        ctx = self._ctx()
+        """注册：完整流程由鼠标点击 + 键盘输入驱动，不依赖模板识别/状态机。"""
         self._register_fields_filled = False
-        self._register_clicked = False
 
-        def click_register(c: Context) -> bool:
-            # TITLE -> 点击注册按钮进入注册页 CHECK_IN（一次性，避免页面加载期间重复点击）
-            if self._register_clicked:
-                return True
-            self.controller.click(955, 792)  # CALIBRATE: 注册按钮坐标（实机确认）
-            self._register_clicked = True
-            return True
+        # 1) TITLE -> 点击注册按钮进入注册页（固定坐标）
+        self.controller.click(955, 792)  # CALIBRATE: 注册按钮坐标（实机确认）
+        time.sleep(2.0)  # CALIBRATE: 等待注册页加载
 
-        def fill_and_submit(c: Context) -> bool:
-            # CHECK_IN -> 填表（幂等）并提交（Enter），成功后进入 LOG_IN
-            if not self._fill_register_form(c):
-                return False
-            return self._submit_and_verify(c)
+        # 2) 填写注册表单并勾选用户协议
+        if not self._fill_register_form(self._ctx()):
+            return False
 
-        fsm = StateMachine(
-            {
-                GameState.TITLE: [
-                    Transition(GameState.CHECK_IN, action=click_register),
-                ],
-                GameState.CHECK_IN: [
-                    Transition(GameState.LOG_IN, action=fill_and_submit),
-                ],
-            },
-            name="register",
-            timeout=self.config.timeout,
-            max_attempts=self.config.max_attempts,
-        )
-        fsm.run(ctx, stop_state=GameState.LOG_IN)
-        return ctx.last_state == GameState.LOG_IN
+        # 3) 提交并等待进入登录页
+        return self._submit_and_verify(self._ctx())
 
     # ------------------------------------------------------------------
     # 注册页表单填写（Tab 切换字段）
@@ -438,9 +418,12 @@ class OuterLifecycle(_LifecycleBase):
         return True
 
     def _submit_and_verify(self, c: Context) -> bool:
-        """按 Enter 提交注册，等待进入 LOG_IN；识别注册失败则换号重填。"""
+        """按 Enter 提交注册；固定等待后判定结果（不再用模板识别登录页）。
+
+        仅保留 OCR 识别注册失败关键词（用户名冲突等），命中则换号重填。
+        """
         self.controller.key_press("enter")
-        deadline = time.monotonic() + 15.0
+        deadline = time.monotonic() + 5.0  # CALIBRATE: 等待注册结果时长（秒）
         while time.monotonic() < deadline:
             try:
                 frame = c.capturer.grab()
@@ -448,13 +431,6 @@ class OuterLifecycle(_LifecycleBase):
                 logger.warning("提交注册后抓帧失败: %s", exc)
                 return False
             c.frame = frame
-            observed = observe_state(
-                frame, c.vision,
-                candidates=(GameState.LOG_IN,),
-                store=c.store, config=c.config,
-            )
-            if observed == GameState.LOG_IN:
-                return True
             # 识别「用户名已存在 / 注册失败」等弹窗，命中则换号并允许下轮重填
             if self._detect_register_failure(frame):
                 logger.warning("注册失败（用户名冲突/失败提示），重新生成账号")
@@ -462,8 +438,7 @@ class OuterLifecycle(_LifecycleBase):
                 self._register_fields_filled = False
                 return False
             time.sleep(0.5)
-        logger.warning("提交注册后等待进入 LOG_IN 超时")
-        return False
+        return True
 
     def _detect_register_failure(self, frame) -> bool:
         """OCR 识别注册失败关键词（用户名已存在 / 注册失败等）。"""
