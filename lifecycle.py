@@ -32,6 +32,8 @@ from calibration import normalize_text, polygon_to_bbox, report_problem
 from fsm import Context, RuntimeConfig, StateMachine, Transition
 from game_states import Country, GameState, TEMPLATE_SIGNATURES, observe_state, resolve_template_path
 from targets import Target, find_target
+from input_controller import InputController
+controller = InputController
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +368,7 @@ class OuterLifecycle(_LifecycleBase):
         def click_register(c: Context) -> bool:
             # TITLE -> 点击注册按钮进入注册页 CHECK_IN（一次性，避免页面加载期间重复点击）
             if self._register_clicked:
+                controller.click(955,792)  # CALIBRATE: 注册按钮坐标（实机确认）
                 return True
             if not self._click_target(
                 c, Target(name="注册按钮", 
@@ -407,14 +410,11 @@ class OuterLifecycle(_LifecycleBase):
         # 表单字段只填一次；协议勾选失败重试时不再重复输入，避免污染已填内容。
         if not self._register_fields_filled:
             # 1) 点击用户名输入框（模板 username.png），粘贴用户名
-            if not self._click_target(
-                c, Target(name="用户名输入框",
-                           kind="template", 
-                           template_path="username.png", 
-                           threshold=0.8,
-                           roi=(779,465,950,500))
-            ):
-                return False
+            if self._click_target:
+                controller.click(843,472)  # CALIBRATE: 用户名输入框坐标（实机确认）
+
+                if not self._click_target(
+                ):return False
             self.controller.paste_text(self.account["username"])
 
             # 2) tab -> 密码
