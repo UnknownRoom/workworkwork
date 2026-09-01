@@ -146,7 +146,7 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
     # CHECK_IN 改用 OCR 签名「确认密码」（注册页独有字段，登录页无）；LOG_IN 仍用模板签名 Channel.png。
     GameState.CHECK_IN: [
         # CALIBRATE: 注册页独有字段名，实机 OCR 确认后调整。
-        StateSignature("确认密码"),
+        StateSignature("消息"),
     ],
     GameState.GAME_START: [
         StateSignature("点击进入游戏"),
