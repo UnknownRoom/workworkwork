@@ -14,6 +14,6 @@ client = api.connect(
 controller = InputController(client)
 
 controller.click(959, 591)
-client.key_press("end")
+client.keyPress("end")
 
 client.disconnect()
