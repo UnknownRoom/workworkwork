@@ -298,7 +298,7 @@ class OuterLifecycle(_LifecycleBase):
                 kind="template",
                 template_path="language.png",
                 threshold=0.8,
-                bbox=(1919,100,35,45)
+                roi=(1919,100,35,45)
             ),
         )
         if ok:
