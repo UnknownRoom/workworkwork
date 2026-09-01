@@ -68,9 +68,9 @@ class ScreenCapturer:
             raise RuntimeError(
                 "缺少 vncdotool，请先执行: pip install vncdotool"
             ) from exc
+        
+        self._client.refreshScreen(incremental=False)  # 首次全量刷新，填充 framebuffer
 
-        # 直接读取已有画面帧（调用方 main.py 已执行过 refreshScreen 填充 framebuffer），
-        # 不再重复 refreshScreen，避免阻塞等待第二次 framebuffer 更新。
         screen = self._client.screen
         if screen is None:
             raise RuntimeError("VNC 连接已建立，但未收到画面帧")

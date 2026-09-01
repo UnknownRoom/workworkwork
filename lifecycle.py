@@ -28,7 +28,7 @@ import time
 from dataclasses import replace
 from typing import Dict, List, Optional, Tuple
 
-from calibration import polygon_to_bbox, report_problem
+from calibration import normalize_text, polygon_to_bbox, report_problem
 from fsm import Context, RuntimeConfig, StateMachine, Transition
 from game_states import Country, GameState, TEMPLATE_SIGNATURES, observe_state, resolve_template_path
 from targets import Target, find_target
@@ -223,7 +223,6 @@ class OuterLifecycle(_LifecycleBase):
         self.hide_stall_initialized = False
         self.account: Dict[str, str] = {"username": "", "password": "", "email": ""}
         self.used_usernames: set = set()
-        self._register_form_done = False
         self._register_fields_filled = False
         self._login_form_done = False
         self._consecutive_failures = 0
@@ -360,37 +359,34 @@ class OuterLifecycle(_LifecycleBase):
 
     def register(self) -> bool:
         ctx = self._ctx()
-        self._register_form_done = False
         self._register_fields_filled = False
+        self._register_clicked = False
 
-        def do_register(c: Context) -> bool:
-            # 标题页：点击「注册」按钮（模板 checkin.png）
+        def click_register(c: Context) -> bool:
+            # TITLE -> 点击注册按钮进入注册页 CHECK_IN（一次性，避免页面加载期间重复点击）
+            if self._register_clicked:
+                return True
             if not self._click_target(
-                c, Target(name="注册按钮", kind="template", template_path="checkin.png", threshold=0.6)
+                c, Target(name="注册按钮", kind="template",
+                          template_path="checkin.png", threshold=0.6)
             ):
                 return False
-            # 点击后默认进入 CHECK_IN（注册页），不再依赖 checkin_mark 状态识别
-            # （实机该标记常识别不到）；改为轮询抓帧直接尝试填表，直到成功或超时。
-            logger.info("已点击注册按钮，默认进入 CHECK_IN 注册页")
-            deadline = time.monotonic() + 6.0
-            while time.monotonic() < deadline:
-                time.sleep(0.5)
-                try:
-                    frame = c.capturer.grab()
-                except Exception as exc:
-                    logger.warning("注册页抓帧失败: %s", exc)
-                    continue
-                c.frame = frame
-                # _fill_register_form 内部有幂等保护，重复尝试不会污染已填字段
-                if self._fill_register_form(c):
-                    self._register_form_done = True
-                    return True
-            return False
+            self._register_clicked = True
+            return True
+
+        def fill_and_submit(c: Context) -> bool:
+            # CHECK_IN -> 填表（幂等）并提交（Enter），成功后进入 LOG_IN
+            if not self._fill_register_form(c):
+                return False
+            return self._submit_and_verify(c)
 
         fsm = StateMachine(
             {
                 GameState.TITLE: [
-                    Transition(GameState.LOG_IN, action=do_register),
+                    Transition(GameState.CHECK_IN, action=click_register),
+                ],
+                GameState.CHECK_IN: [
+                    Transition(GameState.LOG_IN, action=fill_and_submit),
                 ],
             },
             name="register",
@@ -433,30 +429,79 @@ class OuterLifecycle(_LifecycleBase):
         if not self._agree_to_terms(c):
             return False
 
-        # 7) 点击注册提交按钮（login_access.png，仅在 CHECK_IN 阶段存在）
-        return self._click_target(
-            c, Target(name="注册提交", kind="template", template_path="login_access.png", threshold=0.6)
-        )
+        # 提交改由 _submit_and_verify 按 Enter 完成（见 register() 的 fill_and_submit）。
+        return True
 
     def _agree_to_terms(self, c: Context) -> bool:
-        # box.png 为纯「同意用户协议」勾选框模板（未勾选态，15x19）；
-        # 两个协议各一个勾选框，点击每个匹配框中心。
-        matches = c.vision.find_template_all(c.frame, "box.png", threshold=0.6)
-        if not matches:
-            report_problem(
-                c.frame, c.vision, "未找到用户协议勾选框 (box.png)", name="register"
-            )
+        # box.png 为纯「同意用户协议」勾选框模板（未勾选态）；两个协议各一个勾选框。
+        # 用新鲜帧（避免填表前的旧帧），并按分数降序 + NMS 去重后取前 2 个真实勾选框。
+        try:
+            frame = c.capturer.grab()
+        except Exception as exc:
+            logger.warning("勾选协议抓帧失败: %s", exc)
             return False
-        if len(matches) < 2:
-            logger.warning("只找到 %d 个勾选框，需确认第二个协议位置（CALIBRATE）", len(matches))
-        for corners, score in matches[:2]:
-            xs = [p[0] for p in corners]
-            ys = [p[1] for p in corners]
-            cx = (min(xs) + max(xs)) // 2
-            cy = (min(ys) + max(ys)) // 2
+        c.frame = frame
+
+        matches = c.vision.find_template_all(frame, "box.png", threshold=0.6)
+        if not matches:
+            report_problem(frame, c.vision, "未找到用户协议勾选框 (box.png)", name="register")
+            return False
+
+        matches.sort(key=lambda m: m[1], reverse=True)
+        kept: List[Tuple[Tuple[int, int], float]] = []
+        for corners, score in matches:
+            cx = sum(p[0] for p in corners) // len(corners)
+            cy = sum(p[1] for p in corners) // len(corners)
+            if any(abs(cx - kx) < 8 and abs(cy - ky) < 8 for (kx, ky), _ in kept):
+                continue
+            kept.append(((cx, cy), score))
+            if len(kept) >= 2:
+                break
+
+        if len(kept) < 2:
+            logger.warning("只找到 %d 个勾选框，需确认第二个协议位置（CALIBRATE）", len(kept))
+        for (cx, cy), score in kept:
             logger.info("勾选用户协议 @ (%d, %d), score=%.3f", cx, cy, score)
             c.controller.click(cx, cy)
         return True
+
+    def _submit_and_verify(self, c: Context) -> bool:
+        """按 Enter 提交注册，等待进入 LOG_IN；识别注册失败则换号重填。"""
+        self.controller.key_press("enter")
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            try:
+                frame = c.capturer.grab()
+            except Exception as exc:
+                logger.warning("提交注册后抓帧失败: %s", exc)
+                return False
+            c.frame = frame
+            observed = observe_state(
+                frame, c.vision,
+                candidates=(GameState.LOG_IN,),
+                store=c.store, config=c.config,
+            )
+            if observed == GameState.LOG_IN:
+                return True
+            # 识别「用户名已存在 / 注册失败」等弹窗，命中则换号并允许下轮重填
+            if self._detect_register_failure(frame):
+                logger.warning("注册失败（用户名冲突/失败提示），重新生成账号")
+                self._generate_account()
+                self._register_fields_filled = False
+                return False
+            time.sleep(0.5)
+        logger.warning("提交注册后等待进入 LOG_IN 超时")
+        return False
+
+    def _detect_register_failure(self, frame) -> bool:
+        """OCR 识别注册失败关键词（用户名已存在 / 注册失败等）。"""
+        # CALIBRATE: 关键词为占位，需实机确认注册失败弹窗文案。
+        keywords = ("已存在", "注册失败", "失败")
+        for text, _conf, _center in self.vision.read_all(frame):
+            norm = normalize_text(text)
+            if any(kw in norm for kw in keywords):
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # 登录： LOG_IN ->（选频道）-> 填账号密码 -> alarm_window -> CREATE_ROLE

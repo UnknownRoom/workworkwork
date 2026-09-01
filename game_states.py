@@ -143,7 +143,11 @@ STATE_SIGNATURES: Dict[GameState, List[StateSignature]] = {
         StateSignature("Kanal 4"),
         StateSignature("Kanal 5"),
     ],
-    # CHECK_IN / LOG_IN 改用模板签名（见 TEMPLATE_SIGNATURES）：checkin_mark*.png / Channel.png
+    # CHECK_IN 改用 OCR 签名「确认密码」（注册页独有字段，登录页无）；LOG_IN 仍用模板签名 Channel.png。
+    GameState.CHECK_IN: [
+        # CALIBRATE: 注册页独有字段名，实机 OCR 确认后调整。
+        StateSignature("确认密码"),
+    ],
     GameState.GAME_START: [
         StateSignature("点击进入游戏"),
         StateSignature("点击加入游戏"),
@@ -201,10 +205,6 @@ TEMPLATE_SIGNATURES: Dict[GameState, List[TemplateSignature]] = {
     GameState.TITLE: [
         TemplateSignature("checkin.png", threshold=0.6),
         TemplateSignature("login.png", threshold=0.6),
-    ],
-    GameState.CHECK_IN: [
-        TemplateSignature("checkin_mark.png", threshold=0.8, any_of=True),
-        TemplateSignature("checkin_mark2.png", threshold=0.8, any_of=True),
     ],
     GameState.LOG_IN: [
         TemplateSignature("Channel.png", threshold=0.6),
