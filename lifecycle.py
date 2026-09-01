@@ -284,53 +284,32 @@ class OuterLifecycle(_LifecycleBase):
     # 修改默认语言（只执行一次，TITLE 状态第一步）
     # ------------------------------------------------------------------
     def change_default_language(self) -> bool:
-        if self.language_initialized:
-            return True
-        ctx = self._ctx()
-        try:
-            frame = self.capturer.grab()
-        except Exception as exc:
-            logger.error("初始化语言：抓帧失败: %s", exc)
-            return False
-        ctx.frame = frame
-        # 用 language.png 模板定位语言按钮并点击，切换到中文。
-        # 这是后续所有中文状态签名识别的基础，必须在注册流程前完成。
-        ok = self._click_target(
-            ctx,
-            Target(
-                name="语言按钮",
-                kind="template",
-                template_path="language.png",
-                threshold=0.8,
-                roi=(1162,895,40,30)
-            ),
-        )
-        if ok:
-            self.language_initialized = True
-            logger.info("语言已切换为默认（中文）")
-        return ok
+        """切换默认语言为中文（游戏记忆，整个生命周期只执行一次）。"""
+        controller.click(1170,1053)
+        logger.info("语言已切换为默认（中文）")
+    
 
     # ------------------------------------------------------------------
     # 诊断：打印当前画面状态 + OCR 全文
     # ------------------------------------------------------------------
-    def _log_current_state(self) -> None:
-        try:
-            frame = self.capturer.grab()
-        except Exception as exc:
-            logger.error("诊断抓帧失败: %s", exc)
-            return
-        observed = observe_state(
-            frame, self.vision, store=self.store, config=self.config
-        )
-        logger.info("当前识别状态: %s", observed.name if observed else "未知")
-        if observed is None:
-            try:
-                details = self.vision.read_all(frame)
-                logger.warning("当前画面 OCR 全文（共 %d 条）:", len(details))
-                for text, conf, center in details:
-                    logger.warning("    '%s' (%.2f) @ %s", text, conf, center)
-            except Exception as exc:
-                logger.warning("诊断 OCR 失败: %s", exc)
+    # def _log_current_state(self) -> None:
+    #     try:
+    #         frame = self.capturer.grab()
+    #     except Exception as exc:
+    #         logger.error("诊断抓帧失败: %s", exc)
+    #         return
+    #     observed = observe_state(
+    #         frame, self.vision, store=self.store, config=self.config
+    #     )
+    #     logger.info("当前识别状态: %s", observed.name if observed else "未知")
+    #     if observed is None:
+    #         try:
+    #             details = self.vision.read_all(frame)
+    #             logger.warning("当前画面 OCR 全文（共 %d 条）:", len(details))
+    #             for text, conf, center in details:
+    #                 logger.warning("    '%s' (%.2f) @ %s", text, conf, center)
+    #         except Exception as exc:
+    #             logger.warning("诊断 OCR 失败: %s", exc)
 
     # ------------------------------------------------------------------
     # 隐藏摆摊设置（游戏记忆，全局一次）
@@ -375,7 +354,7 @@ class OuterLifecycle(_LifecycleBase):
             return False
 
         # 3) 提交并等待进入登录页
-        return self._submit_and_verify(self._ctx())
+        
 
     # ------------------------------------------------------------------
     # 注册页表单填写（Tab 切换字段）
@@ -438,7 +417,13 @@ class OuterLifecycle(_LifecycleBase):
                 self._register_fields_filled = False
                 return False
             time.sleep(0.5)
-        return True
+            observed = observe_state(
+                frame, c.vision,
+                candidates=(GameState.LOG_IN,),
+                store=c.store, config=c.config,
+                    )
+            if observed == GameState.LOG_IN:
+                return True
 
     def _detect_register_failure(self, frame) -> bool:
         """OCR 识别注册失败关键词（用户名已存在 / 注册失败等）。"""
