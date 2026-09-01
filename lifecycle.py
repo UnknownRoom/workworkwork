@@ -240,9 +240,6 @@ class OuterLifecycle(_LifecycleBase):
         if not self.change_default_language():
             logger.error("语言初始化失败，后续中文识别可能不可用，请检查 language.png")
 
-        # 诊断：打印当前画面识别到的状态与 OCR 全文，便于定位「停在启动」时屏幕在哪
-        self._log_current_state()
-
         while self.running:
             # 每个角色周期只生成一次账号；重试（register/login/create 失败后 continue）
             # 复用同一个账号，避免因状态检测失败而每轮换新用户名死循环。
