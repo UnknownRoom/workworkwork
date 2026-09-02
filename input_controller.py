@@ -123,10 +123,10 @@ class InputController:
         先依次按下，再逆序释放。
         """
         keys = [self._normalize_key(k) for k in keys]
-        self._client.keyDown(keys[0])
+        self._client.keyPress(keys[0])
         self._jitter()
         for k in keys[1:]:
-            self._client.keyDown(k)
+            self._client.keyPress(k)
             self._jitter()
         for k in reversed(keys):
             self._client.keyUp(k)
