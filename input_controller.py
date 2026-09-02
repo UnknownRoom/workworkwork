@@ -135,10 +135,7 @@ class InputController:
     def type_text(client, text):
 
         for char in text:
-            if char == "@":
-                client.keyPress("at")
-            else:
-                client.keyPress(char)
+            client.keyPress(char)
 
     def paste_text(self, text: str) -> None:
         """通过 VNC 剪贴板粘贴文本，绕过远端输入法（IME）吞键问题。
