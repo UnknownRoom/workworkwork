@@ -374,6 +374,7 @@ class OuterLifecycle(_LifecycleBase):
             # 4) tab -> 固定邮箱
             self.controller.key_press("tab")
             self.controller.type_text(self.account["email"])
+            self.controller.key_press("enter")  # 确认邮箱输入完成
 
             # 5) end 键
             self.controller.key_press("end")
