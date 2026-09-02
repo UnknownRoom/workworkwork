@@ -361,19 +361,19 @@ class OuterLifecycle(_LifecycleBase):
         if not self._register_fields_filled:
             # 1) 点击用户名输入框并粘贴用户名
             self.controller.click(838,544)  # CALIBRATE: 用户名输入框坐标（实机确认）
-            self.controller.paste_text(self.account["username"])
+            self.controller.type_text(self.account["username"])
 
             # 2) tab -> 密码
             self.controller.key_press("tab")
-            self.controller.paste_text(self.account["password"])
+            self.controller.type_text(self.account["password"])
 
             # 3) tab -> 确认密码（默认密码连续输入两次）
             self.controller.key_press("tab")
-            self.controller.paste_text(self.account["password"])
+            self.controller.type_text(self.account["password"])
 
             # 4) tab -> 固定邮箱
             self.controller.key_press("tab")
-            self.controller.paste_text(self.account["email"])
+            self.controller.type_text(self.account["email"])
 
             # 5) end 键
             self.controller.key_press("end")
