@@ -132,10 +132,13 @@ class InputController:
             self._client.keyUp(k)
             self._jitter()
 
-    def type_text(client, text):
-
-        for char in text:
-            client.keyPress(char)
+    def type_text(self, text: str) -> None:
+        """逐字符输入文本（仅覆盖可打印 ASCII，中文请用粘贴/剪贴板方案）。"""
+        for ch in text:
+            if ch == "@":
+                self.key_press(self.KEY_ALIASES.get("at", "at"))
+            self._client.key_press(ch)
+            self._jitter()
 
     def paste_text(self, text: str) -> None:
         """通过 VNC 剪贴板粘贴文本，绕过远端输入法（IME）吞键问题。
