@@ -136,9 +136,9 @@ class InputController:
 
         for char in text:
             if char == "@":
-                client.keyDown("shift")
+                client.keyPress("shift")
                 client.keyPress("2")
-                client.keyUp("shift")
+                client.keyPress("shift")
             else:
                 client.keyPress(char)
 
