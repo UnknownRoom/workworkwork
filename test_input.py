@@ -32,9 +32,10 @@ def main():
 
     test_text = "test123456"
 
-    print(f"正在粘贴：{test_text}")
+    print(f"正在输入：{test_text}")
 
-    controller.paste_text(test_text)
+    for key in test_text:
+        client.keyPress(key)
 
     print("✅ paste_text() 执行完成")
     print("请观察游戏用户名输入框是否出现：", test_text)
