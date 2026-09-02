@@ -136,7 +136,7 @@ class InputController:
 
         for char in text:
             if char == "@":
-                client.keyPress('at')
+                client.keyPress("at")
             else:
                 client.keyPress(char)
 
